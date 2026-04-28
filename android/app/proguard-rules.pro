@@ -1,0 +1,5 @@
+-keep class io.flutter.** { *; }
+-keep class com.pdfrx.** { *; }
+-keep class dev.isar.** { *; }
+-keep class com.google.mlkit.** { *; }
+-dontwarn **

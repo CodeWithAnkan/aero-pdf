@@ -1,0 +1,58 @@
+name: aeropdf
+description: Lightweight offline-first 120fps PDF reader with on-device AI.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # PDF rendering (Syncfusion — native text selection, built-in scrollbar)
+  syncfusion_flutter_pdfviewer: ^28.1.33
+  syncfusion_flutter_pdf: ^28.1.33
+
+  # Database (high-speed local NoSQL + FTS)
+  isar: ^3.1.0+1
+  isar_flutter_libs: ^3.1.0+1
+
+  # State management
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # File access
+  file_picker: ^8.1.2
+  permission_handler: ^11.3.1
+  device_info_plus: ^10.1.2
+  path_provider: ^2.1.4
+
+  # Navigation
+  go_router: ^14.2.7
+
+  # OCR (on-device, zero APK size — uses Play Services)
+  google_mlkit_text_recognition: ^0.13.1
+
+  # Hashing
+  crypto: ^3.0.3
+
+  # AI — On-device Gemini Nano via AICore
+  gemini_nano_android: ^0.0.2
+
+  # Icons
+  cupertino_icons: ^1.0.8
+
+flutter:
+  uses-material-design: true
+  assets: []   # Add only when needed — APK size discipline
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  build_runner: ^2.4.11
+  isar_generator: ^3.1.0+1
+  riverpod_generator: ^2.3.0
+  integration_test:
+    sdk: flutter
