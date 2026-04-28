@@ -1,8 +1,9 @@
 import 'dart:io';
 
+import 'package:aeropdf/features/library/book_card.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
-
+import 'package:path_provider/path_provider.dart';
 import 'package:isar/isar.dart';
 
 import '../../core/db/isar_service.dart';
@@ -86,11 +87,11 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
     return _addPdf(path);
   }
 
-  Future<Book?> _addPdf(String path) async {
+Future<Book?> _addPdf(String path) async {
     state = state.copyWith(isLoading: true, error: null);
 
     try {
-      final file = File(path);
+      final file = File(path); // <-- Defined as 'file' here
       final fileName = file.uri.pathSegments.last;
       final hash = await hashFile(path);
 
@@ -103,9 +104,7 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
           .findFirst();
 
       if (existing != null) {
-        // File was moved — update path only
         await isar.writeTxn(() async {
-          existing.filePath = path;
           existing.lastOpened = DateTime.now();
           await isar.books.put(existing);
         });
@@ -113,8 +112,15 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
         return existing;
       }
 
-      // Open briefly to extract metadata
-      final doc = await PdfService.openDocument(path);
+      // ── THE FIX: Copy file to permanent storage ──
+      final appDocDir = await getApplicationDocumentsDirectory();
+      final permanentPath = '${appDocDir.path}/$fileName';
+      
+      // Use 'file.copy' instead of 'originalFile.copy'
+      final savedFile = await file.copy(permanentPath); 
+
+      // Open briefly to extract metadata from the PERMANENT path
+      final doc = await PdfService.openDocument(savedFile.path);
       if (doc == null) {
         state = state.copyWith(
             isLoading: false, error: 'File is corrupted or cannot be opened.');
@@ -125,10 +131,10 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
       final totalPages = doc.pages.count;
       doc.dispose();
 
-      // Insert new book
+      // Insert new book pointing to permanent storage
       final book = Book()
         ..title = title
-        ..filePath = path
+        ..filePath = savedFile.path
         ..fileHash = hash
         ..fileName = fileName
         ..totalPages = totalPages
@@ -140,7 +146,7 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
 
       // Start background FTS + OCR indexing
       final isarDir = await IsarService.directoryPath;
-      indexBookInBackground(book.id, path, isarDir);
+      indexBookInBackground(book.id, savedFile.path, isarDir);
 
       await loadBooks();
       return book;
@@ -154,22 +160,23 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
 
   Future<void> deleteBook(int bookId) async {
     final isar = await IsarService.instance;
+    
+    // We skip File(path).delete() here to keep the physical file safe.
+
     await isar.writeTxn(() async {
+      // 1. Remove the book entry
       await isar.books.delete(bookId);
-      await isar.annotations
-          .filter()
-          .bookIdEqualTo(bookId)
-          .deleteAll();
-      await isar.searchIndexs
-          .filter()
-          .bookIdEqualTo(bookId)
-          .deleteAll();
-      await isar.ocrCaches
-          .filter()
-          .bookIdEqualTo(bookId)
-          .deleteAll();
+      
+      // 2. Clean up associated data to prevent database bloat
+      await isar.annotations.filter().bookIdEqualTo(bookId).deleteAll();
+      await isar.searchIndexs.filter().bookIdEqualTo(bookId).deleteAll();
+      await isar.ocrCaches.filter().bookIdEqualTo(bookId).deleteAll();
     });
-    await loadBooks();
+
+    // 3. Clear the memory cache for the thumbnail
+    thumbnailCache.remove(bookId); 
+
+    await loadBooks(); 
   }
 
   // ── Mark corrupted ──────────────────────────────────────────────────────────

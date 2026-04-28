@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:pdfx/pdfx.dart'; // Make sure you added pdfx to pubspec.yaml
+import 'package:pdfx/pdfx.dart'; 
 import '../../core/models/book.dart';
 
 class BookListTile extends StatelessWidget {
@@ -17,31 +17,30 @@ class BookListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final cs = Theme.of(context).colorScheme; // Dynamic colors!
     final progress = book.totalPages > 0 ? book.lastReadPage / book.totalPages : 0.0;
 
     return InkWell(
       onTap: onTap,
       onLongPress: () => _showOptions(context),
-      borderRadius: BorderRadius.circular(12),
       child: Container(
-        // REMOVED: height: 110 (This caused the overflow)
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerLow,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.5)),
+          border: Border(bottom: BorderSide(color: cs.outlineVariant)),
         ),
-        padding: const EdgeInsets.all(12), // Slightly increased padding for breathing room
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start, // Align to top to prevent flex issues
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Thumbnail
             SizedBox(
-              width: 72,
-              height: 96, // FIXED: Give the thumbnail explicit dimensions instead of the container
+              width: 50,
+              height: 70, 
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: _PdfThumbnail(book: book),
+                borderRadius: BorderRadius.circular(4),
+                child: PdfThumbnail(
+                  book: book,
+                  key: ValueKey('list_${book.id}'),
+                  ), // Using the public widget
               ),
             ),
             const SizedBox(width: 14),
@@ -50,56 +49,35 @@ class BookListTile extends StatelessWidget {
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                // REMOVED: MainAxisAlignment.center so the column sizes to its children naturally
                 children: [
                   Text(
                     book.title,
-                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15, color: cs.onSurface),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   
-                  // Metadata Row: Pages & File Size
                   Row(
                     children: [
-                      Icon(Icons.description_outlined, size: 14, color: colorScheme.onSurfaceVariant),
+                      Icon(Icons.description_outlined, size: 14, color: cs.onSurfaceVariant),
                       const SizedBox(width: 4),
-                      Text(
-                        '${book.totalPages} pages',
-                        style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
-                      ),
+                      Text('${book.totalPages}p', style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
                       const SizedBox(width: 12),
-                      Icon(Icons.folder_outlined, size: 14, color: colorScheme.onSurfaceVariant),
+                      Icon(Icons.folder_outlined, size: 14, color: cs.onSurfaceVariant),
                       const SizedBox(width: 4),
                       _FileSizeWidget(filePath: book.filePath),
                     ],
                   ),
-                  const SizedBox(height: 12), // Added a bit more spacing here
+                  const SizedBox(height: 8),
                   
-                  // Last Opened & Progress
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Opened: ${_formatDate(book.lastOpened)}',
-                        style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
-                      ),
-                      Text(
-                        '${(progress * 100).toInt()}%',
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: colorScheme.primary),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  
-                  // Progress Bar
                   ClipRRect(
                     borderRadius: BorderRadius.circular(2),
                     child: LinearProgressIndicator(
                       value: progress,
-                      minHeight: 4,
-                      backgroundColor: colorScheme.surfaceContainerHigh,
+                      minHeight: 3,
+                      backgroundColor: cs.surfaceContainerHigh,
+                      color: cs.primary,
                     ),
                   ),
                 ],
@@ -109,15 +87,6 @@ class BookListTile extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  String _formatDate(DateTime? date) {
-    if (date == null) return 'Never';
-    final now = DateTime.now();
-    final diff = now.difference(date);
-    if (diff.inDays == 0) return 'Today';
-    if (diff.inDays == 1) return 'Yesterday';
-    return '${date.day}/${date.month}/${date.year}';
   }
 
   void _showOptions(BuildContext context) {
@@ -142,10 +111,6 @@ class BookListTile extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// File Size Widget
-// ─────────────────────────────────────────────────────────────────────────────
-
 class _FileSizeWidget extends StatelessWidget {
   final String filePath;
   const _FileSizeWidget({required this.filePath});
@@ -155,10 +120,8 @@ class _FileSizeWidget extends StatelessWidget {
     return FutureBuilder<int>(
       future: File(filePath).length(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData) return const Text('-- MB', style: TextStyle(fontSize: 12));
-        
-        final bytes = snapshot.data!;
-        final mb = bytes / (1024 * 1024);
+        if (!snapshot.hasData) return const Text('', style: TextStyle(fontSize: 12));
+        final mb = snapshot.data! / (1024 * 1024);
         return Text(
           '${mb.toStringAsFixed(1)} MB',
           style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
@@ -168,22 +131,20 @@ class _FileSizeWidget extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Real PDF Thumbnail using pdfx
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Public PDF Thumbnail Widget ──────────────────────────────────────────────
 
-// Global cache so thumbnails don't re-render wildly when scrolling the list
-final Map<String, MemoryImage> _thumbnailCache = {};
+// CHANGED: Using int instead of String to use book.id, ensuring it never fails on a null hash.
+final Map<int, MemoryImage> thumbnailCache = {};
 
-class _PdfThumbnail extends StatefulWidget {
+class PdfThumbnail extends StatefulWidget {
   final Book book;
-  const _PdfThumbnail({required this.book});
+  const PdfThumbnail({super.key, required this.book});
 
   @override
-  State<_PdfThumbnail> createState() => _PdfThumbnailState();
+  State<PdfThumbnail> createState() => _PdfThumbnailState();
 }
 
-class _PdfThumbnailState extends State<_PdfThumbnail> {
+class _PdfThumbnailState extends State<PdfThumbnail> {
   MemoryImage? _image;
 
   @override
@@ -192,70 +153,87 @@ class _PdfThumbnailState extends State<_PdfThumbnail> {
     _loadThumbnail();
   }
 
+  // Forces the widget to reload if the book changes (e.g., during re-import)
+  @override
+  void didUpdateWidget(PdfThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.book.id != widget.book.id) {
+      _loadThumbnail();
+    }
+  }
+
   Future<void> _loadThumbnail() async {
-    // 1. Check cache first
-    if (_thumbnailCache.containsKey(widget.book.fileHash)) {
-      if (mounted) setState(() => _image = _thumbnailCache[widget.book.fileHash]);
+    final currentBookId = widget.book.id;
+
+    // 1. Check cache
+    if (thumbnailCache.containsKey(currentBookId)) {
+      if (mounted) setState(() => _image = thumbnailCache[currentBookId]);
       return;
     }
 
     try {
-      // 2. Open PDF and get page 1
-      final document = await PdfDocument.openFile(widget.book.filePath);
+      final file = File(widget.book.filePath);
+      if (!await file.exists()) return;
+
+      final bytes = await file.readAsBytes();
+      final document = await PdfDocument.openData(bytes);
       final page = await document.getPage(1);
       
-      // 3. Render page at low resolution to save memory (scaled down by 3)
       final pageImage = await page.render(
-        width: page.width / 3, 
-        height: page.height / 3,
+        width: page.width / 2, 
+        height: page.height / 2,
         format: PdfPageImageFormat.jpeg,
+        quality: 40,
       );
 
       await page.close();
       await document.close();
 
-      // 4. Save to cache and update UI
-      if (pageImage != null) {
+      // 2. ONLY update state if the widget hasn't been recycled for a new book
+      if (pageImage != null && mounted && widget.book.id == currentBookId) {
         final img = MemoryImage(pageImage.bytes);
-        _thumbnailCache[widget.book.fileHash] = img;
-        if (mounted) setState(() => _image = img);
+        thumbnailCache[currentBookId] = img;
+        setState(() => _image = img);
       }
     } catch (e) {
-      debugPrint("[AeroPDF] Thumbnail error for ${widget.book.title}: $e");
+      debugPrint("Thumb error: $e");
     }
   }
-
+  
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
     if (_image != null) {
       return Image(
+        key: ValueKey('thumb_${widget.book.id}'), // Force unique identity
         image: _image!, 
         fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        // Smooth fade-in when the thumbnail loads
+        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+          if (wasSynchronouslyLoaded) return child;
+          return AnimatedOpacity(
+            opacity: frame == null ? 0 : 1,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+            child: child,
+          );
+        },
       );
     }
     
-    // Fallback gradient while loading or if it fails
-    final idx = widget.book.title.isEmpty ? 0 : widget.book.title.codeUnitAt(0) % 5;
-    final colors = [
-      [const Color(0xFF6366F1), const Color(0xFF8B5CF6)],
-      [const Color(0xFF3B82F6), const Color(0xFF06B6D4)],
-      [const Color(0xFF10B981), const Color(0xFF34D399)],
-      [const Color(0xFFF59E0B), const Color(0xFFEF4444)],
-      [const Color(0xFFEC4899), const Color(0xFF8B5CF6)],
-    ][idx];
-
+    // ── Fallback Placeholder ──────────────────────────────────────────
     return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: colors,
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
+      color: cs.surfaceContainerHigh,
+      width: double.infinity,
+      height: double.infinity,
       child: Center(
-        child: Text(
-          widget.book.title.isEmpty ? '?' : widget.book.title[0].toUpperCase(),
-          style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w800),
+        child: Icon(
+          Icons.picture_as_pdf_rounded, 
+          color: cs.onSurfaceVariant.withOpacity(0.3), 
+          size: 32
         ),
       ),
     );

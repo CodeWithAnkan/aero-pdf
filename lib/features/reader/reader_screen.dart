@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart'; // Added for the elegant UI typography
 import 'package:syncfusion_flutter_pdf/pdf.dart' as sf_pdf;
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 
@@ -15,29 +16,27 @@ import '../ai/ai_provider.dart';
 import '../ai/extractive_engine.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Global caches (persist across screen navigations within session)
+// Global caches
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// PDF file bytes cache — avoids re-reading from disk on re-open.
 final Map<String, Uint8List> _pdfBytesCache = {};
-
-/// AI summary cache — avoids re-generating on panel re-open.
 final Map<int, List<String>> _summaryCache = {};
 
-/// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Reader Screen
 // ─────────────────────────────────────────────────────────────────────────────
 
 class ReaderScreen extends ConsumerStatefulWidget {
   final int bookId;
-  const ReaderScreen({super.key, required this.bookId});
+  final int initialPage;
+  const ReaderScreen({super.key, required this.bookId, this.initialPage = 0});
 
   @override
   ConsumerState<ReaderScreen> createState() => _ReaderScreenState();
 }
 
-class _ReaderScreenState extends ConsumerState<ReaderScreen>
-    with SingleTickerProviderStateMixin {
+class _ReaderScreenState extends ConsumerState<ReaderScreen> {
+  
   Book? _book;
   String? _error;
   bool _isLoading = true;
@@ -50,14 +49,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   late final PdfViewerController _pdfController;
   final GlobalKey<SfPdfViewerState> _pdfViewerKey = GlobalKey();
 
-  // ── Scroll & Indicator State ──────────────────────────────────────────────
-  final ValueNotifier<double> _scrollPageEstimate = ValueNotifier(0.0);
-  late final AnimationController _pageIndicatorAnim;
-  Timer? _pageIndicatorHideTimer;
-  int _lastDraggedPage = -1;
-  double _maxScrollExtent = 0.0; // Stores the physical pixel height of the PDF
+  // ── Scroll & Indicator State ──
+  final ValueNotifier<double> _scrollProgress = ValueNotifier(0.0);
+  double _maxScrollExtent = 0.0;
 
-  // ── Search state ──────────────────────────────────────────────────────────
+  // ── Search state ──
   bool _isSearching = false;
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
@@ -67,10 +63,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   void initState() {
     super.initState();
     _pdfController = PdfViewerController();
-    _pageIndicatorAnim = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 250),
-    );
     _loadBook();
   }
 
@@ -90,9 +82,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
 
       setState(() {
         _book = book;
-        _currentPage = book.lastReadPage;
-        _initialPageNumber = book.lastReadPage + 1;
-        _scrollPageEstimate.value = book.lastReadPage.toDouble();
+        _currentPage = widget.initialPage > 0 ? widget.initialPage : book.lastReadPage;
+        _initialPageNumber = _currentPage + 1;
         _isLoading = false;
       });
 
@@ -122,74 +113,36 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     } catch (_) {}
   }
 
-  // ── Scroll Indicator Logic ────────────────────────────────────────────────
+  // ── Scroll & Scrubber Logic ──────────────────────────────────────────────
 
-  void _showPageBubble() {
-    _pageIndicatorHideTimer?.cancel();
-    _pageIndicatorAnim.forward();
-  }
-
-  void _schedulePageBubbleHide() {
-    _pageIndicatorHideTimer?.cancel();
-    _pageIndicatorHideTimer = Timer(const Duration(seconds: 2), () {
-      if (!mounted) return;
-      _pageIndicatorAnim.reverse();
-    });
-  }
-
-bool _handlePdfScroll(ScrollNotification notification) {
-    if (notification is ScrollStartNotification) {
-      _showPageBubble();
-    } else if (notification is ScrollEndNotification) {
-      _schedulePageBubbleHide();
-    }
-
+  bool _handlePdfScroll(ScrollNotification notification) {
     if (_totalPages <= 1 ||
         notification.metrics.axis != Axis.vertical ||
         notification.metrics.maxScrollExtent <= 0) {
       return false;
     }
 
-    // Capture the maximum scroll pixels for buttery smooth thumb dragging
     _maxScrollExtent = notification.metrics.maxScrollExtent;
-
-    // Map raw scroll pixels to page estimate
-    final rawPage = (notification.metrics.pixels / _maxScrollExtent) * (_totalPages - 1);
-    final pageEstimate = rawPage.clamp(0.0, (_totalPages - 1).toDouble());
-
-    _scrollPageEstimate.value = pageEstimate;
-    _showPageBubble();
+    final progress = (notification.metrics.pixels / _maxScrollExtent).clamp(0.0, 1.0);
+    _scrollProgress.value = progress;
     return false;
   }
 
-  void _handleThumbDrag(double localY, double maxHeight) {
-    if (_totalPages <= 1) return;
-    const bubbleHeight = 28.0; // Smaller height
-    
-    // Calculate progress (0.0 to 1.0) based on thumb position
-    final progress = (localY - (bubbleHeight / 2)) / (maxHeight - bubbleHeight);
-    final clampedProgress = progress.clamp(0.0, 1.0);
-    
-    // Snap visual indicator immediately
-    _scrollPageEstimate.value = clampedProgress * (_totalPages - 1);
-    
-    // Smooth pixel scrolling (if extent is known), fallback to jumpToPage if not scrolled yet
-    final targetPage = (clampedProgress * (_totalPages - 1)).round() + 1;
-    
+  void _onScrub(double value) {
+    _scrollProgress.value = value;
     if (_maxScrollExtent > 0) {
-      final targetYOffset = clampedProgress * _maxScrollExtent;
-      _pdfController.jumpTo(yOffset: targetYOffset);
+      _pdfController.jumpTo(yOffset: value * _maxScrollExtent);
     } else {
+      final targetPage = (value * (_totalPages - 1)).round() + 1;
       _pdfController.jumpToPage(targetPage);
     }
-    
-    // Only trigger physical haptics when crossing a whole page boundary
-    if (targetPage != _lastDraggedPage) {
-      _lastDraggedPage = targetPage;
-      HapticFeedback.selectionClick(); 
-    }
   }
-  // ── Search & Insights Methods ─────────────────────────────────────────────
+
+  void _onScrubEnd(double value) {
+    HapticFeedback.lightImpact();
+  }
+
+  // ── Search & Insights ───────────────────────────────────────────────────
 
   void _startSearch() {
     setState(() => _isSearching = true);
@@ -240,31 +193,31 @@ bool _handlePdfScroll(ScrollNotification notification) {
     _pdfController.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
-    _pageIndicatorHideTimer?.cancel();
-    _pageIndicatorAnim.dispose();
-    _scrollPageEstimate.dispose();
+    _scrollProgress.dispose();
     super.dispose();
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
+@override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final bgLight = Theme.of(context).scaffoldBackgroundColor;
+
     if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(backgroundColor: bgLight, body: Center(child: CircularProgressIndicator(color: cs.onSurface)));
     }
 
     if (_error != null || _book == null) {
       return Scaffold(
+        backgroundColor: bgLight,
         appBar: AppBar(
-          title: const Text('Error'),
-          leading: IconButton(
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () => context.pop()),
+          backgroundColor: bgLight,
+          elevation: 0,
+          leading: IconButton(icon: Icon(Icons.arrow_back, color: cs.onSurface), onPressed: () => context.pop()),
         ),
-        body: Center(
-            child: Text(_error ?? 'Unknown error',
-                style: const TextStyle(color: Colors.white70))),
+        body: Center(child: Text(_error ?? 'Unknown error', style: TextStyle(color: cs.onSurface))),
       );
     }
 
@@ -283,153 +236,12 @@ bool _handlePdfScroll(ScrollNotification notification) {
         context.pop();
       },
       child: Scaffold(
+        backgroundColor: bgLight,
         body: SafeArea(
-          child: _isSearching ? _buildSearchLayout() : _buildReaderLayout(),
+          bottom: false,
+          child: _isSearching ? _buildSearchLayout(cs, bgLight) : _buildReaderLayout(cs, bgLight),
         ),
       ),
-    );
-  }
-
-  Widget _buildSearchLayout() {
-    return Column(
-      children: [
-        _buildSearchBar(context),
-        Expanded(child: _buildPdfViewer()),
-      ],
-    );
-  }
-
-  Widget _buildReaderLayout() {
-    return Stack(
-      children: [
-        NotificationListener<ScrollNotification>(
-          onNotification: _handlePdfScroll,
-          child: _buildPdfViewer(),
-        ),
-
-        // UI toggler tap zone (center of screen)
-        Positioned(
-          left: 60,
-          right: 60,
-          top: 76,
-          bottom: 80,
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: () => setState(() => _showUi = !_showUi),
-          ),
-        ),
-
-        // Top bar overlay
-        if (_showUi)
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: _buildTopBar(context),
-          ),
-
-        // ── Adobe-style Draggable Scroll Thumb ─────────────────────────────────
-        // ── Adobe-style Draggable Scroll Thumb ─────────────────────────────────
-        Positioned(
-          right: 0, 
-          top: _showUi ? 60 : 16, 
-          bottom: 16,
-          width: 60, // Invisible hit-box width for easy grabbing
-          child: AnimatedBuilder(
-            animation: _pageIndicatorAnim,
-            builder: (context, child) {
-              return IgnorePointer(
-                ignoring: _pageIndicatorAnim.value == 0,
-                child: Opacity(
-                  opacity: _pageIndicatorAnim.value,
-                  child: child,
-                ),
-              );
-            },
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return GestureDetector(
-                  // behavior: HitTestBehavior.translucent,
-                  onVerticalDragStart: (details) {
-                    _pageIndicatorHideTimer?.cancel();
-                    _showPageBubble();
-                    _handleThumbDrag(details.localPosition.dy, constraints.maxHeight);
-                  },
-                  onVerticalDragUpdate: (details) {
-                    _handleThumbDrag(details.localPosition.dy, constraints.maxHeight);
-                  },
-                  onVerticalDragEnd: (_) {
-                    _lastDraggedPage = -1;
-                    _schedulePageBubbleHide();
-                  },
-                  child: ValueListenableBuilder<double>(
-                    valueListenable: _scrollPageEstimate,
-                    builder: (context, scrollEstimate, _) {
-                      final progress = _totalPages <= 1
-                          ? 0.0
-                          : (scrollEstimate / (_totalPages - 1)).clamp(0.0, 1.0);
-
-                      const bubbleHeight = 28.0;
-                      // Dynamic Y position
-                      final topOffset = progress * (constraints.maxHeight - bubbleHeight);
-
-                      return Stack(
-                        children: [
-                          Positioned(
-                            top: topOffset,
-                            right: 0, // Flush completely to the edge
-                            child: Container(
-                              height: bubbleHeight,
-                              padding: const EdgeInsets.only(left: 12, right: 8),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF2A2A2A), 
-                                // Flush right side, rounded left side (Adobe Style)
-                                borderRadius: const BorderRadius.only(
-                                  topLeft: Radius.circular(14),
-                                  bottomLeft: Radius.circular(14),
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.2),
-                                    blurRadius: 4,
-                                    offset: const Offset(-2, 1),
-                                  ),
-                                ],
-                              ),
-                              alignment: Alignment.center,
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    '${scrollEstimate.round() + 1}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12, // Lowered size
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  Text(
-                                    ' / $_totalPages',
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 11, // Lowered size
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-      ],
     );
   }
 
@@ -447,125 +259,185 @@ bool _handlePdfScroll(ScrollNotification notification) {
       initialPageNumber: _initialPageNumber,
       pageLayoutMode: PdfPageLayoutMode.continuous,
       scrollDirection: PdfScrollDirection.vertical,
-      pageSpacing: 2,
+      pageSpacing: 2.0, // Explicit double fixes linter squiggles
       onDocumentLoaded: (PdfDocumentLoadedDetails details) {
         setState(() {
-          _totalPages = details.document.pages.count;
+          // Much safer way to get page count
+          _totalPages = _pdfController.pageCount;
         });
       },
       onPageChanged: (PdfPageChangedDetails details) {
         _currentPage = details.newPageNumber - 1;
-        _scrollPageEstimate.value = _currentPage.toDouble();
-        _showPageBubble();
-        _schedulePageBubbleHide();
+        if (_totalPages > 1) {
+          _scrollProgress.value = _currentPage / (_totalPages - 1);
+        }
       },
     );
   }
 
-  Widget _buildTopBar(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
-        border: Border(
-            bottom: BorderSide(color: Colors.black.withOpacity(0.1), width: 1)),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: SizedBox(
-          height: 56,
-          child: Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.arrow_back_ios_new_rounded),
-                onPressed: () => context.pop(),
-              ),
-              Expanded(
-                child: Text(
-                  _book!.title,
-                  style: Theme.of(context).textTheme.labelLarge,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.auto_awesome_outlined),
-                tooltip: 'AI Insights',
-                onPressed: _openInsightsPanel,
-              ),
-              IconButton(
-                icon: const Icon(Icons.search_rounded),
-                tooltip: 'Search in PDF',
-                onPressed: _startSearch,
-              ),
-            ],
+  Widget _buildSearchLayout(ColorScheme cs, Color bgLight) {
+    return Column(
+      children: [
+        _buildSearchBar(context, cs, bgLight),
+        Expanded(child: _buildPdfViewer()),
+      ],
+    );
+  }
+
+  Widget _buildReaderLayout(ColorScheme cs, Color bgLight) {
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: NotificationListener<ScrollNotification>(
+            onNotification: _handlePdfScroll,
+            child: _buildPdfViewer(),
           ),
         ),
+        Positioned(
+          left: MediaQuery.of(context).size.width * 0.2, 
+          right: MediaQuery.of(context).size.width * 0.2, 
+          top: 100, 
+          bottom: 100,
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () {
+              setState(() => _showUi = !_showUi);
+              if (_showUi) HapticFeedback.selectionClick();
+            },
+          ),
+        ),
+        AnimatedPositioned(
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
+          top: _showUi ? 0 : -80,
+          left: 0, right: 0,
+          child: _buildTopBar(cs, bgLight),
+        ),
+        AnimatedPositioned(
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
+          bottom: _showUi ? 0 : -120,
+          left: 0, right: 0,
+          child: _buildBottomBar(cs, bgLight),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTopBar(ColorScheme cs, Color bgLight) {
+    return Container(
+      height: 64,
+      decoration: BoxDecoration(
+        color: bgLight,
+        border: Border(bottom: BorderSide(color: cs.outlineVariant, width: 1)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        children: [
+          IconButton(icon: Icon(Icons.arrow_back_rounded, color: cs.onSurface), onPressed: () => context.pop()),
+          Expanded(
+            child: Text(
+              _book!.title,
+              style: GoogleFonts.archivo(color: cs.onSurface, fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: -0.2),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          ),
+          IconButton(icon: Icon(Icons.auto_awesome_rounded, color: cs.onSurface, size: 20), onPressed: _openInsightsPanel),
+          IconButton(icon: Icon(Icons.search_rounded, color: cs.onSurface, size: 22), onPressed: _startSearch),
+        ],
       ),
     );
   }
 
-  Widget _buildSearchBar(BuildContext context) {
+  Widget _buildBottomBar(ColorScheme cs, Color bgLight) {
+    return Container(
+      decoration: BoxDecoration(
+        color: bgLight,
+        border: Border(top: BorderSide(color: cs.outlineVariant, width: 1)),
+      ),
+      padding: EdgeInsets.only(left: 24, right: 24, top: 16, bottom: 16 + MediaQuery.of(context).padding.bottom),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ValueListenableBuilder<double>(
+            valueListenable: _scrollProgress,
+            builder: (context, progress, _) {
+              final displayPage = (progress * (_totalPages - 1)).round() + 1;
+              final percent = (progress * 100).toInt();
+              final style = GoogleFonts.archivo(fontSize: 11, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant, letterSpacing: 1.2);
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('PG. $displayPage', style: style),
+                  Text('$percent%', style: style.copyWith(color: cs.onSurface)),
+                  Text('$_totalPages PAGES', style: style),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          ValueListenableBuilder<double>(
+            valueListenable: _scrollProgress,
+            builder: (context, progress, _) {
+              return SliderTheme(
+                data: SliderThemeData(
+                  trackHeight: 2,
+                  activeTrackColor: cs.onSurface,
+                  inactiveTrackColor: cs.outlineVariant,
+                  thumbColor: cs.onSurface,
+                  overlayColor: cs.onSurface.withOpacity(0.1),
+                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6, elevation: 0),
+                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+                  trackShape: const RectangularSliderTrackShape(),
+                ),
+                child: Slider(value: progress.clamp(0.0, 1.0), onChanged: _onScrub, onChangeEnd: _onScrubEnd),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchBar(BuildContext context, ColorScheme cs, Color bgLight) {
     final result = _searchResult;
     final hasResults = result != null && result.totalInstanceCount > 0;
 
     return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
-        border: Border(
-            bottom: BorderSide(color: Colors.black.withOpacity(0.1), width: 1)),
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: SizedBox(
-          height: 56,
-          child: Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.arrow_back_rounded),
-                onPressed: _closeSearch,
+      decoration: BoxDecoration(color: bgLight, border: Border(bottom: BorderSide(color: cs.outlineVariant, width: 1))),
+      height: 64,
+      child: Row(
+        children: [
+          IconButton(icon: Icon(Icons.arrow_back_rounded, color: cs.onSurface), onPressed: _closeSearch),
+          Expanded(
+            child: TextField(
+              controller: _searchController, focusNode: _searchFocusNode, autofocus: true,
+              style: GoogleFonts.archivo(color: cs.onSurface, fontSize: 16),
+              decoration: InputDecoration(
+                hintText: 'Search...',
+                hintStyle: GoogleFonts.archivo(color: cs.onSurfaceVariant),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                suffixText: hasResults ? '${result.currentInstanceIndex} / ${result.totalInstanceCount}' : null,
+                suffixStyle: GoogleFonts.archivo(fontSize: 13, color: cs.onSurfaceVariant),
               ),
-              Expanded(
-                child: TextField(
-                  controller: _searchController,
-                  focusNode: _searchFocusNode,
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    hintText: 'Search in PDF…',
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 14),
-                    suffixText: hasResults
-                        ? '${result.currentInstanceIndex} / ${result.totalInstanceCount}'
-                        : null,
-                    suffixStyle: TextStyle(
-                      fontSize: 13,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  onChanged: _onSearchChanged,
-                  textInputAction: TextInputAction.search,
-                ),
-              ),
-              if (hasResults) ...[
-                IconButton(
-                  icon: const Icon(Icons.keyboard_arrow_up_rounded),
-                  tooltip: 'Previous match',
-                  onPressed: () => result.previousInstance(),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                  tooltip: 'Next match',
-                  onPressed: () => result.nextInstance(),
-                ),
-              ],
-            ],
+              onChanged: _onSearchChanged, textInputAction: TextInputAction.search,
+            ),
           ),
-        ),
+          if (hasResults) ...[
+            IconButton(icon: Icon(Icons.keyboard_arrow_up_rounded, color: cs.onSurface), onPressed: () => result.previousInstance()),
+            IconButton(icon: Icon(Icons.keyboard_arrow_down_rounded, color: cs.onSurface), onPressed: () => result.nextInstance()),
+          ],
+        ],
       ),
     );
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cached AI Insights Panel — full PDF summary, generated once
+// Cached AI Insights Panel (Unchanged internally, minimal UI tweaks)
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _CachedInsightsPanel extends ConsumerStatefulWidget {
@@ -580,8 +452,7 @@ class _CachedInsightsPanel extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<_CachedInsightsPanel> createState() =>
-      _CachedInsightsPanelState();
+  ConsumerState<_CachedInsightsPanel> createState() => _CachedInsightsPanelState();
 }
 
 class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
@@ -618,8 +489,7 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
 
       for (int i = 0; i < pdfDoc.pages.count; i++) {
         try {
-          final text =
-              extractor.extractText(startPageIndex: i, endPageIndex: i);
+          final text = extractor.extractText(startPageIndex: i, endPageIndex: i);
           pages.add(PageText(pageNumber: i, text: text));
         } catch (_) {
           pages.add(PageText(pageNumber: i, text: ''));
@@ -631,7 +501,7 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
         if (!mounted) return;
         setState(() {
           _loading = false;
-          _error = 'No text found in this PDF.';
+          _error = 'No text found in this document.';
         });
         return;
       }
@@ -639,11 +509,7 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
       final engine = await ref.read(aiEngineProvider.future);
       _engineName = engine.engineName;
 
-      final result = await engine.summarizeChapter(
-        pages: pages,
-        allPages: pages,
-      );
-
+      final result = await engine.summarizeChapter(pages: pages, allPages: pages);
       _summaryCache[widget.bookId] = result.sentences;
 
       if (!mounted) return;
@@ -662,7 +528,8 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    const textMain = Color(0xFF121212);
+    const muted = Color(0xFF8E8D8A);
 
     return DraggableScrollableSheet(
       initialChildSize: 0.5,
@@ -671,183 +538,77 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
       expand: false,
       builder: (context, scrollController) {
         return Container(
-          decoration: BoxDecoration(
-            color: cs.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.2),
-                blurRadius: 16,
-                offset: const Offset(0, -4),
-              ),
-            ],
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
           ),
           child: ListView(
             controller: scrollController,
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
             children: [
               Center(
                 child: Container(
-                  margin: const EdgeInsets.symmetric(vertical: 12),
-                  width: 40,
+                  margin: const EdgeInsets.symmetric(vertical: 16),
+                  width: 36,
                   height: 4,
-                  decoration: BoxDecoration(
-                    color: cs.outlineVariant,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+                  decoration: BoxDecoration(color: const Color(0xFFE5E4E0), borderRadius: BorderRadius.circular(2)),
                 ),
               ),
               Row(
                 children: [
-                  Icon(Icons.auto_awesome_rounded, size: 20, color: cs.primary),
+                  const Icon(Icons.auto_awesome_rounded, size: 20, color: textMain),
                   const SizedBox(width: 8),
                   Text(
                     'AI Summary',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                    style: GoogleFonts.archivo(fontSize: 18, fontWeight: FontWeight.w700, color: textMain),
                   ),
                   const Spacer(),
                   if (_engineName.isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: cs.primaryContainer,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        _engineName,
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                          color: cs.onPrimaryContainer,
-                        ),
-                      ),
+                    Text(
+                      _engineName,
+                      style: GoogleFonts.archivo(fontSize: 10, fontWeight: FontWeight.w700, color: muted, letterSpacing: 0.5),
                     ),
                 ],
               ),
-              const SizedBox(height: 4),
-              Text(
-                'Full document summary',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: cs.onSurfaceVariant,
-                    ),
-              ),
-              const Divider(height: 24),
+              const SizedBox(height: 24),
+
               if (_sentences == null && !_loading && _error == null) ...[
-                const SizedBox(height: 20),
-                Center(
-                  child: FilledButton.icon(
-                    onPressed: _generateSummary,
-                    icon: const Icon(Icons.auto_awesome_rounded),
-                    label: const Text('Generate Summary'),
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 24, vertical: 14),
-                    ),
+                OutlinedButton.icon(
+                  onPressed: _generateSummary,
+                  icon: const Icon(Icons.bolt_rounded, color: textMain),
+                  label: Text('Generate', style: GoogleFonts.archivo(color: textMain, fontWeight: FontWeight.w600)),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: textMain),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
                 ),
                 const SizedBox(height: 12),
-                Center(
-                  child: Text(
-                    'Uses on-device AI. No data leaves your phone.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: cs.onSurfaceVariant,
-                        ),
-                  ),
+                Text(
+                  'Processed entirely on-device.',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.archivo(fontSize: 12, color: muted),
                 ),
               ],
+
               if (_loading)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 40),
-                  child: Column(
-                    children: [
-                      CircularProgressIndicator(),
-                      SizedBox(height: 16),
-                      Text('Generating summary…',
-                          style: TextStyle(color: Colors.grey)),
-                    ],
-                  ),
+                  child: Center(child: CircularProgressIndicator(color: textMain)),
                 ),
+
               if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 20),
-                  child: Column(
-                    children: [
-                      Text(
-                        _error!,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: cs.error),
-                      ),
-                      const SizedBox(height: 12),
-                      OutlinedButton(
-                        onPressed: _generateSummary,
-                        child: const Text('Retry'),
-                      ),
-                    ],
-                  ),
-                ),
+                Text(_error!, style: GoogleFonts.archivo(color: Colors.red.shade600), textAlign: TextAlign.center),
+
               if (_sentences != null)
                 ..._sentences!.asMap().entries.map((entry) {
                   return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          width: 24,
-                          height: 24,
-                          margin: const EdgeInsets.only(top: 1, right: 12),
-                          decoration: BoxDecoration(
-                            color: cs.primaryContainer,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Center(
-                            child: Text(
-                              '${entry.key + 1}',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: cs.onPrimaryContainer,
-                              ),
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Text(
-                            entry.value,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(height: 1.5),
-                          ),
-                        ),
-                      ],
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: Text(
+                      '${entry.key + 1}. ${entry.value}',
+                      style: GoogleFonts.newsreader(fontSize: 18, color: textMain, height: 1.5),
                     ),
                   );
                 }),
-              if (_sentences != null && _sentences!.isNotEmpty) ...[
-                const SizedBox(height: 16),
-                OutlinedButton.icon(
-                  onPressed: () {
-                    final text = _sentences!
-                        .asMap()
-                        .entries
-                        .map((e) => '${e.key + 1}. ${e.value}')
-                        .join('\n');
-                    Clipboard.setData(ClipboardData(text: text));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Summary copied'),
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.copy_rounded, size: 16),
-                  label: const Text('Copy Summary'),
-                ),
-              ],
             ],
           ),
         );
