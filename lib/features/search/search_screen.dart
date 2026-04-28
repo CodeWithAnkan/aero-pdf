@@ -122,7 +122,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                match.content.trim(),
+                match.pageText.trim(),
                 style: TextStyle(color: cs.onSurface, fontSize: 14, height: 1.4),
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,

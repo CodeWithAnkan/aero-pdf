@@ -1,16 +1,12 @@
 import 'dart:io';
 import 'dart:isolate';
-
+import 'package:flutter/foundation.dart';
 import 'package:isar/isar.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 
 import '../models/book.dart';
 import '../models/ocr_cache.dart';
 import '../models/search_index.dart';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Message types for isolate progress reporting
-// ─────────────────────────────────────────────────────────────────────────────
 
 class IndexingProgress {
   final int bookId;
@@ -26,27 +22,15 @@ class IndexingProgress {
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Indexing isolate entry point
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Indexes all pages of a PDF into Isar's FTS engine.
-/// Runs entirely in a background isolate — never blocks the UI thread.
-///
-/// Steps per page:
-/// 1. Try native text extraction via Syncfusion PDF.
-/// 2. If page looks scanned (<30 chars), mark for lazy OCR.
-/// 3. Store text in [SearchIndex] (FTS-indexed).
-/// 4. Mark [Book.isIndexed] = true when done.
-///
-/// [sendPort] receives [IndexingProgress] updates (nullable — omit for fire-and-forget).
 Future<void> indexBookInBackground(
   int bookId,
   String filePath,
   String isarDirectory, {
   SendPort? sendPort,
 }) async {
+  // Isolate.run creates a separate memory heap for this task
   await Isolate.run(() async {
+    // Open a dedicated Isar instance for this isolate
     final isar = await Isar.open(
       [BookSchema, SearchIndexSchema, OcrCacheSchema],
       directory: isarDirectory,
@@ -54,43 +38,41 @@ Future<void> indexBookInBackground(
     );
 
     try {
-      final bytes = await File(filePath).readAsBytes();
+      final file = File(filePath);
+      if (!await file.exists()) return;
+
+      final bytes = await file.readAsBytes();
       final pdfDoc = PdfDocument(inputBytes: bytes);
       final extractor = PdfTextExtractor(pdfDoc);
       final totalPages = pdfDoc.pages.count;
+      
       int scannedPageCount = 0;
+      List<SearchIndex> indexResults = [];
 
       for (int i = 0; i < totalPages; i++) {
-        String pageText;
-
-        // Try native text extraction first
+        String pageText = '';
         try {
+          // Extract text for the specific page
           pageText = extractor.extractText(startPageIndex: i, endPageIndex: i);
-        } catch (_) {
-          pageText = '';
+        } catch (e) {
+          debugPrint("Extraction failed on page $i: $e");
         }
 
-        // If page has very little text, it's likely scanned
-        bool isScanned = false;
-        if (pageText.trim().length < 30) {
-          isScanned = true;
-          scannedPageCount++;
-          // Note: OCR can't run in a background isolate (requires platform channels).
-          // OCR will run lazily on the main isolate when the user views the page.
-        }
+        // Logic check: if text is sparse, mark for future OCR
+        bool isScanned = pageText.trim().length < 30;
+        if (isScanned) scannedPageCount++;
 
-        // Feed into FTS regardless of source
         if (pageText.trim().isNotEmpty) {
-          await isar.writeTxn(() => isar.searchIndexs.put(
-                SearchIndex()
-                  ..bookId = bookId
-                  ..pageNumber = i
-                  ..pageText = pageText
-                  ..isOcr = isScanned,
-              ));
+          indexResults.add(
+            SearchIndex()
+              ..bookId = bookId
+              ..pageNumber = i
+              ..pageText = pageText // Corrected naming
+              ..isOcr = isScanned,
+          );
         }
 
-        // Report progress back to the main isolate
+        // Send progress updates back to UI if a port is provided
         sendPort?.send(IndexingProgress(
           bookId: bookId,
           currentPage: i + 1,
@@ -99,19 +81,23 @@ Future<void> indexBookInBackground(
         ));
       }
 
-      pdfDoc.dispose();
-
-      // Mark book as indexed
-      final book = await isar.books.get(bookId);
-      if (book != null) {
-        await isar.writeTxn(() async {
+      // Perform a single batch write for efficiency
+      await isar.writeTxn(() async {
+        await isar.searchIndexs.putAll(indexResults);
+        
+        final book = await isar.books.get(bookId);
+        if (book != null) {
           book.isIndexed = true;
           book.scannedPageCount = scannedPageCount;
           await isar.books.put(book);
-        });
-      }
-    } catch (_) {
-      // Indexing failed silently — book remains unindexed
+        }
+      });
+
+      pdfDoc.dispose();
+      await isar.close(); // Important: Release database lock
+      
+    } catch (e) {
+      debugPrint("INDEXING CRITICAL FAILURE: $e");
     }
   });
 }
