@@ -47,15 +47,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   int _initialPageNumber = 1;
   int _totalPages = 1;
 
-  // ValueNotifiers for smooth scroll without rebuilding the whole screen
-  final ValueNotifier<double> _scrollPageEstimate = ValueNotifier(0.0);
-  final ValueNotifier<double> _pageSweepProgress = ValueNotifier(0.0);
-
   late final PdfViewerController _pdfController;
   final GlobalKey<SfPdfViewerState> _pdfViewerKey = GlobalKey();
 
-  // PDF bytes for memory-based loading
-  Uint8List? _pdfBytes;
+  // ── Scroll & Indicator State ──────────────────────────────────────────────
+  final ValueNotifier<double> _scrollPageEstimate = ValueNotifier(0.0);
+  late final AnimationController _pageIndicatorAnim;
+  Timer? _pageIndicatorHideTimer;
+  int _lastDraggedPage = -1;
+  double _maxScrollExtent = 0.0; // Stores the physical pixel height of the PDF
 
   // ── Search state ──────────────────────────────────────────────────────────
   bool _isSearching = false;
@@ -63,17 +63,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   final _searchFocusNode = FocusNode();
   PdfTextSearchResult? _searchResult;
 
-  // ── Custom page indicator animation ───────────────────────────────────────
-  late final AnimationController _pageIndicatorAnim;
-  Timer? _pageIndicatorHideTimer;
-
   @override
   void initState() {
     super.initState();
     _pdfController = PdfViewerController();
     _pageIndicatorAnim = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 250),
     );
     _loadBook();
   }
@@ -92,25 +88,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         return;
       }
 
-      // Pre-load PDF bytes (from cache or disk)
-      Uint8List bytes;
-      if (_pdfBytesCache.containsKey(book.filePath)) {
-        bytes = _pdfBytesCache[book.filePath]!;
-      } else {
-        bytes = await File(book.filePath).readAsBytes();
-        _pdfBytesCache[book.filePath] = bytes;
-      }
-
       setState(() {
         _book = book;
-        _pdfBytes = bytes;
         _currentPage = book.lastReadPage;
         _initialPageNumber = book.lastReadPage + 1;
         _scrollPageEstimate.value = book.lastReadPage.toDouble();
         _isLoading = false;
       });
 
-      // Kick off background indexing if not done yet
       if (!book.isIndexed) {
         final isarDir = await IsarService.directoryPath;
         indexBookInBackground(book.id, book.filePath, isarDir);
@@ -137,7 +122,74 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     } catch (_) {}
   }
 
-  // ── Search methods ────────────────────────────────────────────────────────
+  // ── Scroll Indicator Logic ────────────────────────────────────────────────
+
+  void _showPageBubble() {
+    _pageIndicatorHideTimer?.cancel();
+    _pageIndicatorAnim.forward();
+  }
+
+  void _schedulePageBubbleHide() {
+    _pageIndicatorHideTimer?.cancel();
+    _pageIndicatorHideTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      _pageIndicatorAnim.reverse();
+    });
+  }
+
+bool _handlePdfScroll(ScrollNotification notification) {
+    if (notification is ScrollStartNotification) {
+      _showPageBubble();
+    } else if (notification is ScrollEndNotification) {
+      _schedulePageBubbleHide();
+    }
+
+    if (_totalPages <= 1 ||
+        notification.metrics.axis != Axis.vertical ||
+        notification.metrics.maxScrollExtent <= 0) {
+      return false;
+    }
+
+    // Capture the maximum scroll pixels for buttery smooth thumb dragging
+    _maxScrollExtent = notification.metrics.maxScrollExtent;
+
+    // Map raw scroll pixels to page estimate
+    final rawPage = (notification.metrics.pixels / _maxScrollExtent) * (_totalPages - 1);
+    final pageEstimate = rawPage.clamp(0.0, (_totalPages - 1).toDouble());
+
+    _scrollPageEstimate.value = pageEstimate;
+    _showPageBubble();
+    return false;
+  }
+
+  void _handleThumbDrag(double localY, double maxHeight) {
+    if (_totalPages <= 1) return;
+    const bubbleHeight = 28.0; // Smaller height
+    
+    // Calculate progress (0.0 to 1.0) based on thumb position
+    final progress = (localY - (bubbleHeight / 2)) / (maxHeight - bubbleHeight);
+    final clampedProgress = progress.clamp(0.0, 1.0);
+    
+    // Snap visual indicator immediately
+    _scrollPageEstimate.value = clampedProgress * (_totalPages - 1);
+    
+    // Smooth pixel scrolling (if extent is known), fallback to jumpToPage if not scrolled yet
+    final targetPage = (clampedProgress * (_totalPages - 1)).round() + 1;
+    
+    if (_maxScrollExtent > 0) {
+      final targetYOffset = clampedProgress * _maxScrollExtent;
+      _pdfController.jumpTo(yOffset: targetYOffset);
+    } else {
+      _pdfController.jumpToPage(targetPage);
+    }
+    
+    // Only trigger physical haptics when crossing a whole page boundary
+    if (targetPage != _lastDraggedPage) {
+      _lastDraggedPage = targetPage;
+      HapticFeedback.selectionClick(); 
+    }
+  }
+  // ── Search & Insights Methods ─────────────────────────────────────────────
 
   void _startSearch() {
     setState(() => _isSearching = true);
@@ -167,217 +219,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     });
   }
 
-  // ── Page indicator ────────────────────────────────────────────────────────
-
-  void _showPageBubble() {
-    _pageIndicatorHideTimer?.cancel();
-    _pageIndicatorAnim.forward();
-  }
-
-  void _schedulePageBubbleHide() {
-    _pageIndicatorHideTimer?.cancel();
-    _pageIndicatorHideTimer = Timer(const Duration(seconds: 4), () {
-      if (!mounted) return;
-      _pageIndicatorAnim.reverse();
-    });
-  }
-
-  bool _handlePdfScroll(ScrollNotification notification) {
-    if (notification is ScrollStartNotification) {
-      _showPageBubble();
-    } else if (notification is ScrollEndNotification) {
-      _schedulePageBubbleHide();
-    }
-
-    if (_totalPages <= 1 ||
-        notification.metrics.axis != Axis.vertical ||
-        notification.metrics.maxScrollExtent <= 0) {
-      return false;
-    }
-
-    final rawPage =
-        (notification.metrics.pixels / notification.metrics.maxScrollExtent) *
-            (_totalPages - 1);
-    final pageEstimate = rawPage.clamp(0.0, (_totalPages - 1).toDouble());
-    final pageIndex = pageEstimate.round().clamp(0, _totalPages - 1);
-    final sweepProgress = pageEstimate - pageEstimate.floorToDouble();
-
-    if ((pageEstimate - _scrollPageEstimate.value).abs() < 0.01 &&
-        pageIndex == _currentPage) {
-      return false;
-    }
-
-    _scrollPageEstimate.value = pageEstimate;
-    _pageSweepProgress.value = sweepProgress;
-
-    if (_currentPage != pageIndex) {
-      _currentPage = pageIndex;
-    }
-    _showPageBubble();
-    return false;
-  }
-
-  Future<void> _openPageJumpDialog() async {
-    _showPageBubble();
-    _pageIndicatorHideTimer?.cancel();
-
-    final controller =
-        TextEditingController(text: _indicatorPageNumber().toString());
-    final target = await showModalBottomSheet<int>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) {
-        var selectedPage = _indicatorPageNumber().clamp(1, _totalPages);
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            void setPage(int page) {
-              selectedPage = page.clamp(1, _totalPages);
-              controller.text = selectedPage.toString();
-              controller.selection = TextSelection.fromPosition(
-                TextPosition(offset: controller.text.length),
-              );
-              setSheetState(() {});
-            }
-
-            return Padding(
-              padding: EdgeInsets.fromLTRB(
-                20,
-                4,
-                20,
-                MediaQuery.viewInsetsOf(context).bottom + 20,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      IconButton.filledTonal(
-                        onPressed: selectedPage > 1
-                            ? () => setPage(selectedPage - 1)
-                            : null,
-                        icon: const Icon(Icons.keyboard_arrow_up_rounded),
-                        tooltip: 'Previous page',
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: controller,
-                          autofocus: true,
-                          keyboardType: TextInputType.number,
-                          textAlign: TextAlign.center,
-                          decoration: InputDecoration(
-                            labelText: 'Page',
-                            suffixText: '/ $_totalPages',
-                            border: const OutlineInputBorder(),
-                          ),
-                          onChanged: (value) {
-                            final page = int.tryParse(value.trim());
-                            if (page == null) return;
-                            selectedPage = page.clamp(1, _totalPages);
-                            setSheetState(() {});
-                          },
-                          onSubmitted: (_) {
-                            Navigator.of(context).pop(selectedPage);
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      IconButton.filledTonal(
-                        onPressed: selectedPage < _totalPages
-                            ? () => setPage(selectedPage + 1)
-                            : null,
-                        icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                        tooltip: 'Next page',
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  Slider(
-                    value: selectedPage.toDouble(),
-                    min: 1,
-                    max: _totalPages.toDouble(),
-                    divisions: _totalPages > 1 && _totalPages <= 1000
-                        ? _totalPages - 1
-                        : null,
-                    label: '$selectedPage',
-                    onChanged: (value) => setPage(value.round()),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Text(
-                        '1',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                      const Spacer(),
-                      Text(
-                        '$_totalPages',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton(
-                      onPressed: () => Navigator.of(context).pop(selectedPage),
-                      child: const Text('Go to page'),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-    controller.dispose();
-
-    if (target == null) {
-      _schedulePageBubbleHide();
-      return;
-    }
-
-    await Future<void>.delayed(const Duration(milliseconds: 180));
-    await _jumpToPage(target);
-    _schedulePageBubbleHide();
-  }
-
-  Future<void> _jumpToPage(int target) async {
-    final page = target.clamp(1, _totalPages);
-    FocusManager.instance.primaryFocus?.unfocus();
-    _showPageBubble();
-    _pdfController.jumpToPage(page);
-    if (!mounted) return;
-
-    _scrollPageEstimate.value = (page - 1).toDouble();
-    _pageSweepProgress.value = 0.0;
-
-    _currentPage = page - 1;
-
-    await Future<void>.delayed(const Duration(milliseconds: 120));
-    if (!mounted) return;
-
-    final offset = _pdfController.scrollOffset;
-    if (offset.dy.isFinite) {
-      final nudge = page < _totalPages ? 1.0 : -1.0;
-      final nudgedY = (offset.dy + nudge).clamp(0.0, double.maxFinite);
-      _pdfController.jumpTo(xOffset: offset.dx, yOffset: nudgedY);
-      await Future<void>.delayed(const Duration(milliseconds: 24));
-    }
-
-    if (mounted) {
-      _pdfController.jumpToPage(page);
-    }
-  }
-
-  // ── AI Insights ───────────────────────────────────────────────────────────
-
   void _openInsightsPanel() {
     final book = _book;
     if (book == null) return;
-
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -399,50 +243,31 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     _pageIndicatorHideTimer?.cancel();
     _pageIndicatorAnim.dispose();
     _scrollPageEstimate.dispose();
-    _pageSweepProgress.dispose();
     super.dispose();
   }
 
+  // ── Build ─────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
-    // ── Loading ─────────────────────────────────────────────────────────────
     if (_isLoading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    // ── Error ───────────────────────────────────────────────────────────────
-    if (_error != null || _book == null || _pdfBytes == null) {
+    if (_error != null || _book == null) {
       return Scaffold(
         appBar: AppBar(
           title: const Text('Error'),
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () => context.pop(),
-          ),
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => context.pop()),
         ),
         body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, color: Colors.red, size: 48),
-                const SizedBox(height: 16),
-                Text(
-                  _error ?? 'Unknown error',
-                  style: const TextStyle(color: Colors.white70),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          ),
-        ),
+            child: Text(_error ?? 'Unknown error',
+                style: const TextStyle(color: Colors.white70))),
       );
     }
 
-    // ── PDF Viewer ──────────────────────────────────────────────────────────
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -465,8 +290,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     );
   }
 
-  // ── Search active: Column layout (search bar pushes PDF down) ──────────
-
   Widget _buildSearchLayout() {
     return Column(
       children: [
@@ -476,110 +299,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     );
   }
 
-  // ── Normal reading: Stack layout (overlay top bar + page indicator) ────
-
   Widget _buildReaderLayout() {
     return Stack(
       children: [
-        _buildPdfViewer(),
-
-        // Top bar overlay
-        if (_showUi)
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: _buildTopBar(context),
-          ),
-
-        // Custom smooth page indicator — right side
-        Positioned(
-          right: 12,
-          top: _showUi ? 68 : 16,
-          bottom: 16,
-          child: AnimatedBuilder(
-            animation: _pageIndicatorAnim,
-            builder: (context, child) {
-              return IgnorePointer(
-                ignoring: _pageIndicatorAnim.value == 0,
-                child: child,
-              );
-            },
-            child: ValueListenableBuilder<double>(
-              valueListenable: _scrollPageEstimate,
-              builder: (context, scrollEstimate, _) {
-                return Align(
-                  alignment: Alignment(
-                    1.0,
-                    _totalPages <= 1
-                        ? -1.0
-                        : -1.0 + (2.0 * (scrollEstimate / (_totalPages - 1))),
-                  ),
-                  child: FadeTransition(
-                    opacity: _pageIndicatorAnim,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: _openPageJumpDialog,
-                      child: Container(
-                        constraints: const BoxConstraints(minWidth: 88),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 9),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.78),
-                          borderRadius: BorderRadius.circular(18),
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  '${(scrollEstimate.round().clamp(0, _totalPages - 1)) + 1} / $_totalPages',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                const Icon(
-                                  Icons.edit_rounded,
-                                  size: 13,
-                                  color: Colors.white70,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 5),
-                            SizedBox(
-                              width: 68,
-                              child: ValueListenableBuilder<double>(
-                                valueListenable: _pageSweepProgress,
-                                builder: (context, sweep, _) {
-                                  return LinearProgressIndicator(
-                                    value: sweep.clamp(0.0, 1.0),
-                                    minHeight: 2,
-                                    backgroundColor: Colors.white24,
-                                    valueColor:
-                                        const AlwaysStoppedAnimation<Color>(
-                                            Colors.white),
-                                  );
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
+        NotificationListener<ScrollNotification>(
+          onNotification: _handlePdfScroll,
+          child: _buildPdfViewer(),
         ),
 
-        // â”€â”€ PDF viewer (loaded from memory bytes for instant re-open) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
+        // UI toggler tap zone (center of screen)
         Positioned(
           left: 60,
           right: 60,
@@ -590,97 +318,190 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
             onTap: () => setState(() => _showUi = !_showUi),
           ),
         ),
+
+        // Top bar overlay
+        if (_showUi)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: _buildTopBar(context),
+          ),
+
+        // ── Adobe-style Draggable Scroll Thumb ─────────────────────────────────
+        // ── Adobe-style Draggable Scroll Thumb ─────────────────────────────────
+        Positioned(
+          right: 0, 
+          top: _showUi ? 60 : 16, 
+          bottom: 16,
+          width: 60, // Invisible hit-box width for easy grabbing
+          child: AnimatedBuilder(
+            animation: _pageIndicatorAnim,
+            builder: (context, child) {
+              return IgnorePointer(
+                ignoring: _pageIndicatorAnim.value == 0,
+                child: Opacity(
+                  opacity: _pageIndicatorAnim.value,
+                  child: child,
+                ),
+              );
+            },
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return GestureDetector(
+                  // behavior: HitTestBehavior.translucent,
+                  onVerticalDragStart: (details) {
+                    _pageIndicatorHideTimer?.cancel();
+                    _showPageBubble();
+                    _handleThumbDrag(details.localPosition.dy, constraints.maxHeight);
+                  },
+                  onVerticalDragUpdate: (details) {
+                    _handleThumbDrag(details.localPosition.dy, constraints.maxHeight);
+                  },
+                  onVerticalDragEnd: (_) {
+                    _lastDraggedPage = -1;
+                    _schedulePageBubbleHide();
+                  },
+                  child: ValueListenableBuilder<double>(
+                    valueListenable: _scrollPageEstimate,
+                    builder: (context, scrollEstimate, _) {
+                      final progress = _totalPages <= 1
+                          ? 0.0
+                          : (scrollEstimate / (_totalPages - 1)).clamp(0.0, 1.0);
+
+                      const bubbleHeight = 28.0;
+                      // Dynamic Y position
+                      final topOffset = progress * (constraints.maxHeight - bubbleHeight);
+
+                      return Stack(
+                        children: [
+                          Positioned(
+                            top: topOffset,
+                            right: 0, // Flush completely to the edge
+                            child: Container(
+                              height: bubbleHeight,
+                              padding: const EdgeInsets.only(left: 12, right: 8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF2A2A2A), 
+                                // Flush right side, rounded left side (Adobe Style)
+                                borderRadius: const BorderRadius.only(
+                                  topLeft: Radius.circular(14),
+                                  bottomLeft: Radius.circular(14),
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.2),
+                                    blurRadius: 4,
+                                    offset: const Offset(-2, 1),
+                                  ),
+                                ],
+                              ),
+                              alignment: Alignment.center,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    '${scrollEstimate.round() + 1}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12, // Lowered size
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  Text(
+                                    ' / $_totalPages',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 11, // Lowered size
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
       ],
     );
   }
 
   Widget _buildPdfViewer() {
-    return NotificationListener<ScrollNotification>(
-      onNotification: _handlePdfScroll,
-      child: SfPdfViewer.memory(
-        _pdfBytes!,
-        key: _pdfViewerKey,
-        controller: _pdfController,
-        canShowScrollHead: false,
-        canShowScrollStatus: true,
-        canShowPaginationDialog: true,
-        enableTextSelection: true,
-        enableDoubleTapZooming: true,
-        initialZoomLevel: 1.0,
-        initialPageNumber: _initialPageNumber,
-        pageLayoutMode: PdfPageLayoutMode.continuous,
-        scrollDirection: PdfScrollDirection.vertical,
-        pageSpacing: 2,
-        onDocumentLoaded: (PdfDocumentLoadedDetails details) {
-          setState(() {
-            _totalPages = details.document.pages.count;
-          });
-        },
-        onPageChanged: (PdfPageChangedDetails details) {
-          final newPage = details.newPageNumber - 1;
-          _scrollPageEstimate.value = newPage.toDouble();
-          _pageSweepProgress.value = 0.0;
-          _currentPage = newPage;
-          _showPageBubble();
-        },
-      ),
+    return SfPdfViewer.file(
+      File(_book!.filePath),
+      key: _pdfViewerKey,
+      controller: _pdfController,
+      canShowScrollHead: false,
+      canShowScrollStatus: false,
+      canShowPaginationDialog: false,
+      enableTextSelection: true,
+      enableDoubleTapZooming: true,
+      initialZoomLevel: 1.0,
+      initialPageNumber: _initialPageNumber,
+      pageLayoutMode: PdfPageLayoutMode.continuous,
+      scrollDirection: PdfScrollDirection.vertical,
+      pageSpacing: 2,
+      onDocumentLoaded: (PdfDocumentLoadedDetails details) {
+        setState(() {
+          _totalPages = details.document.pages.count;
+        });
+      },
+      onPageChanged: (PdfPageChangedDetails details) {
+        _currentPage = details.newPageNumber - 1;
+        _scrollPageEstimate.value = _currentPage.toDouble();
+        _showPageBubble();
+        _schedulePageBubbleHide();
+      },
     );
   }
-
-  int _indicatorPageNumber() {
-    final page = _scrollPageEstimate.value.round().clamp(0, _totalPages - 1);
-    return page + 1;
-  }
-
-  // ── Top bar (normal mode) ─────────────────────────────────────────────
 
   Widget _buildTopBar(BuildContext context) {
     return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Colors.black87, Colors.transparent],
-        ),
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        border: Border(
+            bottom: BorderSide(color: Colors.black.withOpacity(0.1), width: 1)),
       ),
-      child: SizedBox(
-        height: 56,
-        child: Row(
-          children: [
-            IconButton(
-              icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                  color: Colors.white),
-              onPressed: () => context.pop(),
-            ),
-            Expanded(
-              child: Text(
-                _book!.title,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                ),
-                overflow: TextOverflow.ellipsis,
+      child: SafeArea(
+        bottom: false,
+        child: SizedBox(
+          height: 56,
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                onPressed: () => context.pop(),
               ),
-            ),
-            IconButton(
-              icon:
-                  const Icon(Icons.auto_awesome_outlined, color: Colors.white),
-              tooltip: 'AI Insights',
-              onPressed: _openInsightsPanel,
-            ),
-            IconButton(
-              icon: const Icon(Icons.search_rounded, color: Colors.white),
-              tooltip: 'Search in PDF',
-              onPressed: _startSearch,
-            ),
-          ],
+              Expanded(
+                child: Text(
+                  _book!.title,
+                  style: Theme.of(context).textTheme.labelLarge,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.auto_awesome_outlined),
+                tooltip: 'AI Insights',
+                onPressed: _openInsightsPanel,
+              ),
+              IconButton(
+                icon: const Icon(Icons.search_rounded),
+                tooltip: 'Search in PDF',
+                onPressed: _startSearch,
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
-
-  // ── Search bar (Google Drive style) ───────────────────────────────────
 
   Widget _buildSearchBar(BuildContext context) {
     final result = _searchResult;
@@ -688,57 +509,55 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
 
     return Container(
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.15),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        color: Theme.of(context).scaffoldBackgroundColor,
+        border: Border(
+            bottom: BorderSide(color: Colors.black.withOpacity(0.1), width: 1)),
       ),
-      child: SizedBox(
-        height: 56,
-        child: Row(
-          children: [
-            IconButton(
-              icon: const Icon(Icons.arrow_back_rounded),
-              onPressed: _closeSearch,
-            ),
-            Expanded(
-              child: TextField(
-                controller: _searchController,
-                focusNode: _searchFocusNode,
-                autofocus: true,
-                decoration: InputDecoration(
-                  hintText: 'Search in PDF…',
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 14),
-                  suffixText: hasResults
-                      ? '${result.currentInstanceIndex} / ${result.totalInstanceCount}'
-                      : null,
-                  suffixStyle: TextStyle(
-                    fontSize: 13,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+      child: SafeArea(
+        bottom: false,
+        child: SizedBox(
+          height: 56,
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back_rounded),
+                onPressed: _closeSearch,
+              ),
+              Expanded(
+                child: TextField(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    hintText: 'Search in PDF…',
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                    suffixText: hasResults
+                        ? '${result.currentInstanceIndex} / ${result.totalInstanceCount}'
+                        : null,
+                    suffixStyle: TextStyle(
+                      fontSize: 13,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
+                  onChanged: _onSearchChanged,
+                  textInputAction: TextInputAction.search,
                 ),
-                onChanged: _onSearchChanged,
-                textInputAction: TextInputAction.search,
               ),
-            ),
-            if (hasResults) ...[
-              IconButton(
-                icon: const Icon(Icons.keyboard_arrow_up_rounded),
-                tooltip: 'Previous match',
-                onPressed: () => result.previousInstance(),
-              ),
-              IconButton(
-                icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                tooltip: 'Next match',
-                onPressed: () => result.nextInstance(),
-              ),
+              if (hasResults) ...[
+                IconButton(
+                  icon: const Icon(Icons.keyboard_arrow_up_rounded),
+                  tooltip: 'Previous match',
+                  onPressed: () => result.previousInstance(),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                  tooltip: 'Next match',
+                  onPressed: () => result.nextInstance(),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -786,7 +605,6 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
     });
 
     try {
-      // Use cached bytes if available, else read from disk
       Uint8List bytes;
       if (_pdfBytesCache.containsKey(widget.filePath)) {
         bytes = _pdfBytesCache[widget.filePath]!;
@@ -868,7 +686,6 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
             controller: scrollController,
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
             children: [
-              // Drag handle
               Center(
                 child: Container(
                   margin: const EdgeInsets.symmetric(vertical: 12),
@@ -880,7 +697,6 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
                   ),
                 ),
               ),
-              // Header
               Row(
                 children: [
                   Icon(Icons.auto_awesome_rounded, size: 20, color: cs.primary),
@@ -919,8 +735,6 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
                     ),
               ),
               const Divider(height: 24),
-
-              // Not generated yet
               if (_sentences == null && !_loading && _error == null) ...[
                 const SizedBox(height: 20),
                 Center(
@@ -944,7 +758,6 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
                   ),
                 ),
               ],
-
               if (_loading)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 40),
@@ -957,7 +770,6 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
                     ],
                   ),
                 ),
-
               if (_error != null)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 20),
@@ -976,7 +788,6 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
                     ],
                   ),
                 ),
-
               if (_sentences != null)
                 ..._sentences!.asMap().entries.map((entry) {
                   return Padding(
@@ -1016,8 +827,6 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
                     ),
                   );
                 }),
-
-              // Copy button
               if (_sentences != null && _sentences!.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 OutlinedButton.icon(

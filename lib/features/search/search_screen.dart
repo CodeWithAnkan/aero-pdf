@@ -31,16 +31,25 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final searchState = ref.watch(searchProvider(widget.bookId));
 
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.surface,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1.0),
+          child: Container(
+            color: Colors.black.withOpacity(0.1),
+            height: 1.0,
+          ),
+        ),
         title: TextField(
           controller: _controller,
           autofocus: true,
-          style: const TextStyle(fontSize: 16),
-          decoration: const InputDecoration(
+          style: Theme.of(context).textTheme.bodyMedium,
+          decoration: InputDecoration(
             hintText: 'Search in PDF…',
             border: InputBorder.none,
-            hintStyle: TextStyle(color: Colors.grey),
+            hintStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: const Color(0xFFA39E98), // Warm Gray 300
+            ),
           ),
           onChanged: (v) => _notifier.search(v),
         ),
@@ -147,12 +156,20 @@ class _ResultTile extends StatelessWidget {
             ),
           ),
           if (result.isOcr)
-            Text(
-              'OCR',
-              style: TextStyle(
-                fontSize: 9,
-                color: Colors.orange.shade700,
-                fontWeight: FontWeight.w600,
+            Container(
+              margin: const EdgeInsets.only(top: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF0E5),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Text(
+                'OCR',
+                style: TextStyle(
+                  fontSize: 9,
+                  color: Color(0xFFDD5B00),
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
         ],

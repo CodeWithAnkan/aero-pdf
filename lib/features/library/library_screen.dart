@@ -13,11 +13,18 @@ class LibraryScreen extends ConsumerWidget {
     final state = ref.watch(libraryProvider);
 
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.surface,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text(
+        title: Text(
           'AeroPDF',
-          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22),
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1.0),
+          child: Container(
+            color: Colors.black.withOpacity(0.1),
+            height: 1.0,
+          ),
         ),
         actions: [
           IconButton(
@@ -29,14 +36,24 @@ class LibraryScreen extends ConsumerWidget {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
-          final book =
-              await ref.read(libraryProvider.notifier).pickAndAddPdf();
+          final book = await ref.read(libraryProvider.notifier).pickAndAddPdf();
           if (book != null && context.mounted) {
             context.push('/reader/${book.id}');
           }
         },
+        backgroundColor: const Color(0xFF0075DE),
+        foregroundColor: Colors.white,
+        elevation: 2,
+        focusElevation: 2,
+        hoverElevation: 2,
+        highlightElevation: 2,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(9999)),
         icon: const Icon(Icons.add_rounded),
-        label: const Text('Add PDF'),
+        label: const Text(
+          'Add PDF',
+          style: TextStyle(fontWeight: FontWeight.w600, letterSpacing: 0),
+        ),
       ),
       body: state.isLoading && state.books.isEmpty
           ? const Center(child: CircularProgressIndicator())
@@ -54,19 +71,14 @@ class LibraryScreen extends ConsumerWidget {
               : RefreshIndicator(
                   onRefresh: () =>
                       ref.read(libraryProvider.notifier).loadBooks(),
-                  child: GridView.builder(
+                  child: ListView.separated(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      childAspectRatio: 0.62,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                    ),
                     itemCount: state.books.length,
+                    separatorBuilder: (context, index) =>
+                        const SizedBox(height: 12),
                     itemBuilder: (context, i) {
                       final book = state.books[i];
-                      return BookCard(
+                      return BookListTile(
                         key: ValueKey(book.id),
                         book: book,
                         onTap: () => context.push('/reader/${book.id}'),
@@ -96,29 +108,41 @@ class _EmptyState extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            Icons.picture_as_pdf_rounded,
-            size: 80,
-            color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+            Icons.article_outlined,
+            size: 64,
+            color:
+                Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.3),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 24),
           Text(
             'Your library is empty',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 8),
           Text(
-            'Tap the button below to add your first PDF',
+            'Tap the button below to add your first PDF.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  color: Theme.of(context).textTheme.bodySmall?.color,
                 ),
           ),
           const SizedBox(height: 32),
           FilledButton.icon(
             onPressed: onAdd,
-            icon: const Icon(Icons.add_rounded),
-            label: const Text('Add PDF'),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF0075DE),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6)),
+              elevation: 0,
+            ),
+            icon: const Icon(Icons.add_rounded, size: 20),
+            label: Text(
+              'Add PDF',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: Colors.white,
+                  ),
+            ),
           ),
         ],
       ),
