@@ -77,13 +77,6 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           'Workspace',
           style: TextStyle(color: cs.onSurface, fontSize: 20, fontWeight: FontWeight.w600, letterSpacing: -0.4),
         ),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.search_rounded, color: cs.onSurface),
-            onPressed: () {}, 
-          ),
-          const SizedBox(width: 8),
-        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(color: cs.outlineVariant, height: 1),

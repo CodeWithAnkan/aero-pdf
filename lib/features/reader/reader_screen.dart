@@ -73,6 +73,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   int _totalPages = 1;
 
   late final PdfViewerController _pdfController;
+  late final UndoHistoryController _undoController;
+  final GlobalKey<SfPdfViewerState> _pdfViewerKey = GlobalKey();
 
   // ── Scroll & Indicator State ──
   final ValueNotifier<double> _scrollProgress = ValueNotifier(0.0);
@@ -88,6 +90,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   void initState() {
     super.initState();
     _pdfController = PdfViewerController();
+    _undoController = UndoHistoryController();
     _setSystemUi(true);
     _loadBook();
   }
@@ -220,6 +223,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _setSystemUi(true); // always restore on exit
     _saveProgress();
     _pdfController.dispose();
+    _undoController.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
     _scrollProgress.dispose();
@@ -303,11 +307,40 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
+  void _undoAnnotation() {
+    _undoController.undo();
+  }
+
+  Future<void> _saveAnnotations() async {
+    try {
+      // Extract the PDF bytes with annotations baked in
+      final List<int> bytes = await _pdfController.saveDocument();
+      
+      // Overwrite the original file in storage
+      final file = File(_book!.filePath);
+      await file.writeAsBytes(bytes, flush: true);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Annotations saved to file'),
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint("Save error: $e");
+    }
+  }
+
   Widget _buildPdfViewer() {
     return SfPdfViewer.file(
       File(_book!.filePath),
-      key: ValueKey('pdf_${_book!.id}'),
+      key: _pdfViewerKey,
       controller: _pdfController,
+      undoController: _undoController,
       canShowScrollHead: false,
       canShowScrollStatus: false,
       canShowPaginationDialog: false,
@@ -478,6 +511,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
               textAlign: TextAlign.center,
             ),
           ),
+          IconButton(
+              icon: Icon(Icons.undo_rounded, color: cs.onSurface, size: 20),
+              onPressed: _undoAnnotation),
+          IconButton(
+              icon: Icon(Icons.save_rounded, color: cs.onSurface, size: 20),
+              onPressed: _saveAnnotations),
           IconButton(
               icon: Icon(Icons.auto_awesome_rounded,
                   color: cs.onSurface, size: 20),

@@ -35,7 +35,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             hintStyle: TextStyle(color: cs.onSurfaceVariant, fontSize: 18),
             border: InputBorder.none,
           ),
-          onChanged: (val) => ref.read(globalSearchProvider.notifier).search(val),
+          onChanged: (val) =>
+              ref.read(globalSearchProvider.notifier).search(val),
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
@@ -49,7 +50,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 itemCount: results.length,
                 itemBuilder: (context, i) => _buildBookGroup(results[i], cs),
               ),
-        loading: () => Center(child: CircularProgressIndicator(color: cs.primary)),
+        loading: () =>
+            Center(child: CircularProgressIndicator(color: cs.primary)),
         error: (e, _) => Center(child: Text('Search Error: $e')),
       ),
     );
@@ -81,15 +83,20 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           child: Row(
             children: [
               SizedBox(
-                width: 24, height: 32,
+                width: 24,
+                height: 32,
                 child: PdfThumbnail(book: result.book),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   result.book.title,
-                  style: TextStyle(color: cs.onSurface, fontWeight: FontWeight.bold, fontSize: 14),
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: cs.onSurface,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
@@ -116,14 +123,19 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 color: cs.surfaceContainerHigh,
                 borderRadius: BorderRadius.circular(4),
               ),
-              child: Text('p. ${match.pageNumber + 1}', 
-                style: TextStyle(color: cs.onSurfaceVariant, fontSize: 11, fontWeight: FontWeight.bold)),
+              child: Text('p. ${match.pageNumber + 1}',
+                  style: TextStyle(
+                      color: cs.onSurfaceVariant,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold)),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                match.pageText.trim(),
-                style: TextStyle(color: cs.onSurface, fontSize: 14, height: 1.4),
+                // Replace newlines and multi-spaces with a single space
+                match.pageText.replaceAll(RegExp(r'\s+'), ' ').trim(),
+                style:
+                    TextStyle(color: cs.onSurface, fontSize: 14, height: 1.4),
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
               ),
