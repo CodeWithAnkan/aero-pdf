@@ -91,6 +91,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   final _searchFocusNode = FocusNode();
   PdfTextSearchResult? _searchResult;
 
+  bool _readyToRenderPdf = false;
+
   @override
   void initState() {
     super.initState();
@@ -98,6 +100,16 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     _undoController = UndoHistoryController();
     _setSystemUi(true);
     _loadBook();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 600), () {
+        if (mounted) {
+          setState(() {
+            _readyToRenderPdf = true;
+          });
+        }
+      });
+    });
   }
 
   Future<void> _loadBook() async {
@@ -377,6 +389,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 
   Widget _buildPdfViewer() {
+    if (!_readyToRenderPdf) {
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+    }
     return SfPdfViewerTheme(
       data: SfPdfViewerThemeData(
         backgroundColor: Colors.black,
@@ -810,7 +825,9 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
       final extractor = sf_pdf.PdfTextExtractor(pdfDoc);
       final pages = <PageText>[];
 
-      for (int i = 0; i < pdfDoc.pages.count; i++) {
+      int pageLimit = pdfDoc.pages.count > 50 ? 50 : pdfDoc.pages.count;
+
+      for (int i = 0; i < pageLimit; i++) {
         try {
           final text =
               extractor.extractText(startPageIndex: i, endPageIndex: i);
@@ -853,8 +870,7 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
 
   @override
   Widget build(BuildContext context) {
-    const textMain = Color(0xFF121212);
-    const muted = Color(0xFF8E8D8A);
+    final cs = Theme.of(context).colorScheme;
 
     return DraggableScrollableSheet(
       initialChildSize: 0.5,
@@ -863,9 +879,9 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
       expand: false,
       builder: (context, scrollController) {
         return Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          decoration: BoxDecoration(
+            color: cs.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
           ),
           child: ListView(
             controller: scrollController,
@@ -877,21 +893,21 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
                   width: 36,
                   height: 4,
                   decoration: BoxDecoration(
-                      color: const Color(0xFFE5E4E0),
+                      color: cs.outlineVariant,
                       borderRadius: BorderRadius.circular(2)),
                 ),
               ),
               Row(
                 children: [
-                  const Icon(Icons.auto_awesome_rounded,
-                      size: 20, color: textMain),
+                  Icon(Icons.auto_awesome_rounded,
+                      size: 20, color: cs.onSurface),
                   const SizedBox(width: 8),
                   Text(
                     'AI Summary',
                     style: GoogleFonts.archivo(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
-                        color: textMain),
+                        color: cs.onSurface),
                   ),
                   const Spacer(),
                   if (_engineName.isNotEmpty)
@@ -900,7 +916,7 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
                       style: GoogleFonts.archivo(
                           fontSize: 10,
                           fontWeight: FontWeight.w700,
-                          color: muted,
+                          color: cs.onSurfaceVariant,
                           letterSpacing: 0.5),
                     ),
                 ],
@@ -909,12 +925,12 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
               if (_sentences == null && !_loading && _error == null) ...[
                 OutlinedButton.icon(
                   onPressed: _generateSummary,
-                  icon: const Icon(Icons.bolt_rounded, color: textMain),
+                  icon: Icon(Icons.bolt_rounded, color: cs.onSurface),
                   label: Text('Generate',
                       style: GoogleFonts.archivo(
-                          color: textMain, fontWeight: FontWeight.w600)),
+                          color: cs.onSurface, fontWeight: FontWeight.w600)),
                   style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: textMain),
+                    side: BorderSide(color: cs.onSurface),
                     padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
                 ),
@@ -922,14 +938,14 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
                 Text(
                   'Processed entirely on-device.',
                   textAlign: TextAlign.center,
-                  style: GoogleFonts.archivo(fontSize: 12, color: muted),
+                  style: GoogleFonts.archivo(fontSize: 12, color: cs.onSurfaceVariant),
                 ),
               ],
               if (_loading)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 40),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 40),
                   child:
-                      Center(child: CircularProgressIndicator(color: textMain)),
+                      Center(child: CircularProgressIndicator(color: cs.onSurface)),
                 ),
               if (_error != null)
                 Text(_error!,
@@ -942,7 +958,7 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
                     child: Text(
                       '${entry.key + 1}. ${entry.value}',
                       style: GoogleFonts.newsreader(
-                          fontSize: 18, color: textMain, height: 1.5),
+                          fontSize: 18, color: cs.onSurface, height: 1.5),
                     ),
                   );
                 }),
