@@ -203,20 +203,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // ── About ───────────────────────────────────────────────────────
           _buildSectionHeader('About', cs.onSurfaceVariant),
           _buildSectionGroup(cs.outlineVariant, cs.surface, [
-            _buildInfoTile('Version', '1.0.0 (Build 1)', cs.onSurface, cs.onSurfaceVariant),
+            _buildInfoTile('Version', '1.0.0', cs.onSurface, cs.onSurfaceVariant),
             _buildDivider(cs.outlineVariant),
             _buildNavTile('Privacy Policy', cs.onSurface, cs.onSurfaceVariant, onTap: () {
-              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const StaticDocScreen(
-                title: 'Privacy Policy',
-                content: 'AeroPDF takes your data protection seriously.\n\nWe ensure optimal storage compliance protocols across all file caches. Your data stays locally accessible on-device.',
-              )));
+              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PrivacyPolicyScreen()));
             }),
             _buildDivider(cs.outlineVariant),
             _buildNavTile('Terms of Service', cs.onSurface, cs.onSurfaceVariant, onTap: () {
-              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const StaticDocScreen(
-                title: 'Terms of Service',
-                content: 'By interacting with AeroPDF layouts, you acknowledge baseline usage allowances accordingly.\n\nAll data structures belong securely to native offline memory paths.',
-              )));
+              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const TermsOfServiceScreen()));
             }),
           ]),
         ],
@@ -397,6 +391,117 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class PrivacyPolicyScreen extends StatelessWidget {
+  const PrivacyPolicyScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      appBar: AppBar(
+        title: Text('Privacy Policy', style: TextStyle(color: cs.onSurface, fontSize: 18, fontWeight: FontWeight.w600)),
+        centerTitle: true,
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: cs.onSurface),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Privacy Policy for AeroPDF', style: TextStyle(color: cs.onSurface, fontSize: 22, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text('Effective Date: April 29, 2026', style: TextStyle(color: cs.onSurfaceVariant, fontSize: 14)),
+            const SizedBox(height: 16),
+            Text('At AeroPDF, we believe your data belongs to you. This Privacy Policy outlines our commitment to a 100% offline, private PDF experience.', style: TextStyle(color: cs.onSurface, fontSize: 15, height: 1.5)),
+            const SizedBox(height: 24),
+            _buildSection(cs, '1. Zero-Cloud Architecture', 'AeroPDF is built to function entirely offline. Your PDF documents, annotations, and library data are stored exclusively on your device. We do not maintain servers to store, process, or backup your personal files.'),
+            _buildSection(cs, '2. Information Handling', '• Document Data: All PDF files remain in your device\'s local storage. AeroPDF accesses these files only to provide viewing, searching, and management features.\n\nOn-Device AI & OCR:\n• OCR (Optical Character Recognition): Text extraction is performed locally using on-device vision libraries.\n• AI Insights: All AI-powered features (summarization, analysis, insights) utilize on-device machine learning models. No document text or metadata is ever transmitted to an external server or third-party API for processing.\n\n• Analytics: AeroPDF does not track your behavior or collect usage telemetry. We do not use cookies or trackers.'),
+            _buildSection(cs, '3. Permissions', 'To provide its services, AeroPDF requires:\n• Storage/Files: To import and manage your PDF documents locally.'),
+            _buildSection(cs, '4. No Third-Party Data Sharing', 'Because AeroPDF operates offline, we do not share, sell, or trade any user information with third parties. There are no external AI service providers involved in the core functionality of the app.'),
+            _buildSection(cs, '5. Security', 'Data security is managed at the device level. We utilize the Isar database for high-performance local storage. We recommend using device encryption and secure lock screens to protect your local data.'),
+            _buildSection(cs, '6. Changes to This Policy', 'If future updates introduce optional cloud features, this policy will be updated, and such features will be strictly "opt-in."'),
+            _buildSection(cs, '7. Contact Us', 'For questions regarding this privacy-first approach, contact us at: ankanchatterjee4855@gmail.com'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSection(ColorScheme cs, String heading, String body) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(heading, style: TextStyle(color: cs.onSurface, fontSize: 16, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          Text(body, style: TextStyle(color: cs.onSurfaceVariant, fontSize: 14, height: 1.6)),
+        ],
+      ),
+    );
+  }
+}
+
+class TermsOfServiceScreen extends StatelessWidget {
+  const TermsOfServiceScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      appBar: AppBar(
+        title: Text('Terms of Service', style: TextStyle(color: cs.onSurface, fontSize: 18, fontWeight: FontWeight.w600)),
+        centerTitle: true,
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: cs.onSurface),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Terms of Service for AeroPDF', style: TextStyle(color: cs.onSurface, fontSize: 22, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text('Last Updated: April 29, 2026', style: TextStyle(color: cs.onSurfaceVariant, fontSize: 14)),
+            const SizedBox(height: 16),
+            Text('Welcome to AeroPDF. By using our application, you agree to these Terms. AeroPDF is designed as a fully offline productivity tool.', style: TextStyle(color: cs.onSurface, fontSize: 15, height: 1.5)),
+            const SizedBox(height: 24),
+            _buildSection(cs, '1. License and Scope', 'AeroPDF grants you a personal, non-exclusive license to use the software. As a fully offline tool, you are responsible for maintaining the application and your data on your own hardware.'),
+            _buildSection(cs, '2. Intellectual Property', 'The AeroPDF software, including its unique on-device AI implementation and UI/UX design, is the exclusive property of the developer. You may not decompile or attempt to extract the source code of the application.'),
+            _buildSection(cs, '3. Local Data Responsibility', 'You retain 100% ownership of your content. Since AeroPDF does not sync to the cloud:\n\n• Backup: You are solely responsible for backing up your PDF documents and annotations.\n• Data Loss: We are not liable for data loss resulting from device failure, app deletion, or hardware damage.'),
+            _buildSection(cs, '4. On-Device AI and OCR', '• Privacy: You acknowledge that all AI processing happens locally on your hardware.\n• Performance: AI performance and accuracy are dependent on your device\'s hardware capabilities (CPU/GPU/NPU).\n• No Warranty: While we aim for high-quality extractions and summaries, AI outputs are provided "as-is" without a guarantee of perfect accuracy.'),
+            _buildSection(cs, '5. Disclaimer of Warranties', 'AeroPDF is provided "AS IS." We disclaim all warranties regarding the constant availability of the app or its compatibility with every possible PDF format variation.'),
+            _buildSection(cs, '6. Limitation of Liability', 'In no event shall the developer of AeroPDF be liable for any damages arising out of the use or inability to use the software, even if notified of the possibility of such damages.'),
+            _buildSection(cs, '7. Governing Law', 'These Terms are governed by the laws of India.'),
+            _buildSection(cs, '8. Contact', 'Gmail: ankanchatterjee4855@gmail.com'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSection(ColorScheme cs, String heading, String body) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(heading, style: TextStyle(color: cs.onSurface, fontSize: 16, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          Text(body, style: TextStyle(color: cs.onSurfaceVariant, fontSize: 14, height: 1.6)),
+        ],
       ),
     );
   }
