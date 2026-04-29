@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../core/pdf/ocr_service.dart';
+import '../ocr/ocr_service.dart';
 
 /// Transparent overlay on top of a scanned PDF page that enables
 /// long-press text selection using OCR bounding boxes.

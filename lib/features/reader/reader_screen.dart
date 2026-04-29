@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:aeropdf/core/models/search_index.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart'; // Added for the elegant UI typography
+import 'package:google_fonts/google_fonts.dart';
+import 'package:isar/isar.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart' as sf_pdf;
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 
@@ -14,6 +16,7 @@ import '../../core/models/book.dart';
 import '../../core/pdf/indexing_isolate.dart';
 import '../ai/ai_provider.dart';
 import '../ai/extractive_engine.dart';
+import '../ocr/ocr_controller.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Global caches
@@ -36,18 +39,40 @@ class ReaderScreen extends ConsumerStatefulWidget {
 }
 
 class _ReaderScreenState extends ConsumerState<ReaderScreen> {
-  
   Book? _book;
   String? _error;
   bool _isLoading = true;
   bool _showUi = true;
+  bool _viewerPadded = true;
+
+  static const _barAnimDuration = Duration(milliseconds: 220);
+
+  void _setShowUi(bool visible) {
+    if (visible) {
+      setState(() { _showUi = true; _viewerPadded = true; });
+    } else {
+      setState(() => _showUi = false);
+      Future.delayed(_barAnimDuration, () {
+        if (mounted && !_showUi) setState(() => _viewerPadded = false);
+      });
+    }
+    _setSystemUi(visible);
+  }
+
+  // ── System UI ──────────────────────────────────────────────────────────────
+  void _setSystemUi(bool visible) {
+    if (visible) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    } else {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    }
+  }
 
   int _currentPage = 0;
   int _initialPageNumber = 1;
   int _totalPages = 1;
 
   late final PdfViewerController _pdfController;
-  final GlobalKey<SfPdfViewerState> _pdfViewerKey = GlobalKey();
 
   // ── Scroll & Indicator State ──
   final ValueNotifier<double> _scrollProgress = ValueNotifier(0.0);
@@ -63,6 +88,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   void initState() {
     super.initState();
     _pdfController = PdfViewerController();
+    _setSystemUi(true);
     _loadBook();
   }
 
@@ -82,7 +108,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
       setState(() {
         _book = book;
-        _currentPage = widget.initialPage > 0 ? widget.initialPage : book.lastReadPage;
+        _currentPage =
+            widget.initialPage > 0 ? widget.initialPage : book.lastReadPage;
         _initialPageNumber = _currentPage + 1;
         _isLoading = false;
       });
@@ -123,7 +150,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
 
     _maxScrollExtent = notification.metrics.maxScrollExtent;
-    final progress = (notification.metrics.pixels / _maxScrollExtent).clamp(0.0, 1.0);
+    final progress =
+        (notification.metrics.pixels / _maxScrollExtent).clamp(0.0, 1.0);
     _scrollProgress.value = progress;
     return false;
   }
@@ -156,10 +184,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       return;
     }
     final result = _pdfController.searchText(query);
-    setState(() => _searchResult = result);
     result.addListener(() {
-      if (mounted) setState(() {});
+      if (mounted) setState(() => _searchResult = result);
     });
+    setState(() => _searchResult = result);
   }
 
   void _closeSearch() {
@@ -189,6 +217,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   @override
   void dispose() {
+    _setSystemUi(true); // always restore on exit
     _saveProgress();
     _pdfController.dispose();
     _searchController.dispose();
@@ -198,15 +227,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────
-
   @override
-@override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final bgLight = Theme.of(context).scaffoldBackgroundColor;
 
     if (_isLoading) {
-      return Scaffold(backgroundColor: bgLight, body: Center(child: CircularProgressIndicator(color: cs.onSurface)));
+      return Scaffold(
+          backgroundColor: bgLight,
+          body: Center(child: CircularProgressIndicator(color: cs.onSurface)));
     }
 
     if (_error != null || _book == null) {
@@ -215,9 +244,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         appBar: AppBar(
           backgroundColor: bgLight,
           elevation: 0,
-          leading: IconButton(icon: Icon(Icons.arrow_back, color: cs.onSurface), onPressed: () => context.pop()),
+          leading: IconButton(
+              icon: Icon(Icons.arrow_back, color: cs.onSurface),
+              onPressed: () => context.pop()),
         ),
-        body: Center(child: Text(_error ?? 'Unknown error', style: TextStyle(color: cs.onSurface))),
+        body: Center(
+            child: Text(_error ?? 'Unknown error',
+                style: TextStyle(color: cs.onSurface))),
       );
     }
 
@@ -230,97 +263,192 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           return;
         }
         if (_showUi) {
-          setState(() => _showUi = false);
+          _setShowUi(false);
           return;
         }
         context.pop();
       },
       child: Scaffold(
         backgroundColor: bgLight,
-        body: SafeArea(
-          bottom: false,
-          child: _isSearching ? _buildSearchLayout(cs, bgLight) : _buildReaderLayout(cs, bgLight),
-        ),
+        body: _isSearching ? _buildSearchLayout(cs, bgLight) : _buildReaderLayout(cs, bgLight),
       ),
     );
+  }
+
+  void onPageChanged(int pageIndex) async {
+    _currentPage = pageIndex;
+
+    if (_totalPages > 1) {
+      _scrollProgress.value = _currentPage / (_totalPages - 1);
+    }
+
+    _checkAndTriggerOcr(pageIndex);
+  }
+
+  Future<void> _checkAndTriggerOcr(int pageIndex) async {
+    final isar = await IsarService.instance;
+
+    final indexEntry = await isar.searchIndexs
+        .filter()
+        .bookIdEqualTo(widget.bookId)
+        .pageNumberEqualTo(pageIndex)
+        .findFirst();
+
+    if (indexEntry != null && indexEntry.isOcr) {
+      ref.read(ocrControllerProvider.notifier).processPageIfNeeded(
+            bookId: widget.bookId,
+            pageNumber: pageIndex,
+            filePath: _book!.filePath,
+          );
+    }
   }
 
   Widget _buildPdfViewer() {
     return SfPdfViewer.file(
       File(_book!.filePath),
-      key: _pdfViewerKey,
+      key: ValueKey('pdf_${_book!.id}'),
       controller: _pdfController,
       canShowScrollHead: false,
       canShowScrollStatus: false,
       canShowPaginationDialog: false,
       enableTextSelection: true,
       enableDoubleTapZooming: true,
-      initialZoomLevel: 1.0,
-      initialPageNumber: _initialPageNumber,
+      initialPageNumber: _initialPageNumber.clamp(1, 999999),
       pageLayoutMode: PdfPageLayoutMode.continuous,
       scrollDirection: PdfScrollDirection.vertical,
-      pageSpacing: 2.0, // Explicit double fixes linter squiggles
-      onDocumentLoaded: (PdfDocumentLoadedDetails details) {
-        setState(() {
-          // Much safer way to get page count
-          _totalPages = _pdfController.pageCount;
-        });
+      pageSpacing: 4,
+      onDocumentLoaded: (details) {
+        setState(() => _totalPages = _pdfController.pageCount);
       },
-      onPageChanged: (PdfPageChangedDetails details) {
-        _currentPage = details.newPageNumber - 1;
+      onPageChanged: (details) {
+        final newIdx = details.newPageNumber - 1;
+        setState(() => _currentPage = newIdx);
         if (_totalPages > 1) {
           _scrollProgress.value = _currentPage / (_totalPages - 1);
         }
+        _checkAndTriggerOcr(newIdx);
       },
     );
   }
 
   Widget _buildSearchLayout(ColorScheme cs, Color bgLight) {
-    return Column(
-      children: [
-        _buildSearchBar(context, cs, bgLight),
-        Expanded(child: _buildPdfViewer()),
-      ],
+    return SafeArea(
+      child: Column(
+        children: [
+          _buildSearchBar(context, cs, bgLight),
+          Expanded(child: _buildPdfViewer()),
+        ],
+      ),
     );
   }
 
   Widget _buildReaderLayout(ColorScheme cs, Color bgLight) {
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: NotificationListener<ScrollNotification>(
-            onNotification: _handlePdfScroll,
-            child: _buildPdfViewer(),
+    final topBarHeight = MediaQuery.of(context).padding.top + 64.0;
+    final bottomBarHeight = MediaQuery.of(context).padding.bottom + 80.0;
+
+    return SizedBox.expand(
+      child: Stack(
+        children: [
+          Positioned(
+            top: _viewerPadded ? topBarHeight : 0,
+            bottom: _viewerPadded ? bottomBarHeight : 0,
+            left: 0,
+            right: 0,
+            child: NotificationListener<ScrollNotification>(
+              onNotification: _handlePdfScroll,
+              child: _buildPdfViewer(),
+            ),
           ),
-        ),
-        Positioned(
-          left: MediaQuery.of(context).size.width * 0.2, 
-          right: MediaQuery.of(context).size.width * 0.2, 
-          top: 100, 
-          bottom: 100,
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onTap: () {
-              setState(() => _showUi = !_showUi);
-              if (_showUi) HapticFeedback.selectionClick();
-            },
+
+          // Transparent tap overlay — sits above viewer, below bars.
+          // Only covers the middle strip so text selection near edges still works.
+          // GestureDetector with only onTap does NOT consume scroll/drag events,
+          // so scrolling the PDF passes through freely.
+          Positioned(
+            top: topBarHeight + 60,
+            bottom: bottomBarHeight + 60,
+            left: 0,
+            right: 0,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: () {
+                _setShowUi(!_showUi);
+                HapticFeedback.selectionClick();
+              },
+            ),
           ),
-        ),
-        AnimatedPositioned(
-          duration: const Duration(milliseconds: 350),
-          curve: Curves.easeOutCubic,
-          top: _showUi ? 0 : -80,
-          left: 0, right: 0,
-          child: _buildTopBar(cs, bgLight),
-        ),
-        AnimatedPositioned(
-          duration: const Duration(milliseconds: 350),
-          curve: Curves.easeOutCubic,
-          bottom: _showUi ? 0 : -120,
-          left: 0, right: 0,
-          child: _buildBottomBar(cs, bgLight),
-        ),
-      ],
+
+          // Top bar slides up off-screen when hidden
+          AnimatedPositioned(
+            duration: _barAnimDuration,
+            curve: Curves.easeInOut,
+            top: _showUi ? 0 : -topBarHeight,
+            left: 0,
+            right: 0,
+            child: Container(
+              color: bgLight,
+              child: SafeArea(bottom: false, child: _buildTopBar(cs, bgLight)),
+            ),
+          ),
+
+          // Bottom bar slides down off-screen when hidden
+          AnimatedPositioned(
+            duration: _barAnimDuration,
+            curve: Curves.easeInOut,
+            bottom: _showUi ? 0 : -bottomBarHeight,
+            left: 0,
+            right: 0,
+            child: Container(
+              color: bgLight,
+              child: SafeArea(top: false, child: _buildBottomBar(cs, bgLight)),
+            ),
+          ),
+
+          _buildOcrIndicator(cs),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOcrIndicator(ColorScheme cs) {
+    return Consumer(
+      builder: (context, ref, _) {
+        final ocrState = ref.watch(ocrControllerProvider);
+        return ocrState.maybeWhen(
+          loading: () => Positioned(
+            top: 80,
+            right: 20,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 12,
+                    height: 12,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
+                  ),
+                  SizedBox(width: 8),
+                  Text(
+                    'OCR ACTIVE',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.5),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          orElse: () => const SizedBox.shrink(),
+        );
+      },
     );
   }
 
@@ -334,18 +462,29 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
-          IconButton(icon: Icon(Icons.arrow_back_rounded, color: cs.onSurface), onPressed: () => context.pop()),
+          IconButton(
+              icon: Icon(Icons.arrow_back_rounded, color: cs.onSurface),
+              onPressed: () => context.pop()),
           Expanded(
             child: Text(
               _book!.title,
-              style: GoogleFonts.archivo(color: cs.onSurface, fontSize: 14, fontWeight: FontWeight.w600, letterSpacing: -0.2),
+              style: GoogleFonts.archivo(
+                  color: cs.onSurface,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: -0.2),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
             ),
           ),
-          IconButton(icon: Icon(Icons.auto_awesome_rounded, color: cs.onSurface, size: 20), onPressed: _openInsightsPanel),
-          IconButton(icon: Icon(Icons.search_rounded, color: cs.onSurface, size: 22), onPressed: _startSearch),
+          IconButton(
+              icon: Icon(Icons.auto_awesome_rounded,
+                  color: cs.onSurface, size: 20),
+              onPressed: _openInsightsPanel),
+          IconButton(
+              icon: Icon(Icons.search_rounded, color: cs.onSurface, size: 22),
+              onPressed: _startSearch),
         ],
       ),
     );
@@ -357,7 +496,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         color: bgLight,
         border: Border(top: BorderSide(color: cs.outlineVariant, width: 1)),
       ),
-      padding: EdgeInsets.only(left: 24, right: 24, top: 16, bottom: 16 + MediaQuery.of(context).padding.bottom),
+      padding: EdgeInsets.only(
+          left: 24,
+          right: 24,
+          top: 16,
+          bottom: 16 + MediaQuery.of(context).padding.bottom),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -366,7 +509,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             builder: (context, progress, _) {
               final displayPage = (progress * (_totalPages - 1)).round() + 1;
               final percent = (progress * 100).toInt();
-              final style = GoogleFonts.archivo(fontSize: 11, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant, letterSpacing: 1.2);
+              final style = GoogleFonts.archivo(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: cs.onSurfaceVariant,
+                  letterSpacing: 1.2);
               return Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -380,19 +527,24 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           const SizedBox(height: 12),
           ValueListenableBuilder<double>(
             valueListenable: _scrollProgress,
-            builder: (context, progress, _) {
+            builder: (context, progress, child) {
               return SliderTheme(
                 data: SliderThemeData(
                   trackHeight: 2,
                   activeTrackColor: cs.onSurface,
                   inactiveTrackColor: cs.outlineVariant,
                   thumbColor: cs.onSurface,
-                  overlayColor: cs.onSurface.withOpacity(0.1),
-                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6, elevation: 0),
-                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+                  overlayColor: cs.onSurface.withValues(alpha: 0.1),
+                  thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 6, elevation: 0),
+                  overlayShape:
+                      const RoundSliderOverlayShape(overlayRadius: 16),
                   trackShape: const RectangularSliderTrackShape(),
                 ),
-                child: Slider(value: progress.clamp(0.0, 1.0), onChanged: _onScrub, onChangeEnd: _onScrubEnd),
+                child: Slider(
+                    value: progress.clamp(0.0, 1.0),
+                    onChanged: _onScrub,
+                    onChangeEnd: _onScrubEnd),
               );
             },
           ),
@@ -406,29 +558,46 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final hasResults = result != null && result.totalInstanceCount > 0;
 
     return Container(
-      decoration: BoxDecoration(color: bgLight, border: Border(bottom: BorderSide(color: cs.outlineVariant, width: 1))),
+      decoration: BoxDecoration(
+          color: bgLight,
+          border:
+              Border(bottom: BorderSide(color: cs.outlineVariant, width: 1))),
       height: 64,
       child: Row(
         children: [
-          IconButton(icon: Icon(Icons.arrow_back_rounded, color: cs.onSurface), onPressed: _closeSearch),
+          IconButton(
+              icon: Icon(Icons.arrow_back_rounded, color: cs.onSurface),
+              onPressed: _closeSearch),
           Expanded(
             child: TextField(
-              controller: _searchController, focusNode: _searchFocusNode, autofocus: true,
+              controller: _searchController,
+              focusNode: _searchFocusNode,
+              autofocus: true,
               style: GoogleFonts.archivo(color: cs.onSurface, fontSize: 16),
               decoration: InputDecoration(
                 hintText: 'Search...',
                 hintStyle: GoogleFonts.archivo(color: cs.onSurfaceVariant),
                 border: InputBorder.none,
                 contentPadding: const EdgeInsets.symmetric(vertical: 14),
-                suffixText: hasResults ? '${result.currentInstanceIndex} / ${result.totalInstanceCount}' : null,
-                suffixStyle: GoogleFonts.archivo(fontSize: 13, color: cs.onSurfaceVariant),
+                suffixText: hasResults
+                    ? '${result.currentInstanceIndex} / ${result.totalInstanceCount}'
+                    : null,
+                suffixStyle: GoogleFonts.archivo(
+                    fontSize: 13, color: cs.onSurfaceVariant),
               ),
-              onChanged: _onSearchChanged, textInputAction: TextInputAction.search,
+              onChanged: _onSearchChanged,
+              textInputAction: TextInputAction.search,
             ),
           ),
           if (hasResults) ...[
-            IconButton(icon: Icon(Icons.keyboard_arrow_up_rounded, color: cs.onSurface), onPressed: () => result.previousInstance()),
-            IconButton(icon: Icon(Icons.keyboard_arrow_down_rounded, color: cs.onSurface), onPressed: () => result.nextInstance()),
+            IconButton(
+                icon:
+                    Icon(Icons.keyboard_arrow_up_rounded, color: cs.onSurface),
+                onPressed: () => result.previousInstance()),
+            IconButton(
+                icon: Icon(Icons.keyboard_arrow_down_rounded,
+                    color: cs.onSurface),
+                onPressed: () => result.nextInstance()),
           ],
         ],
       ),
@@ -452,7 +621,8 @@ class _CachedInsightsPanel extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<_CachedInsightsPanel> createState() => _CachedInsightsPanelState();
+  ConsumerState<_CachedInsightsPanel> createState() =>
+      _CachedInsightsPanelState();
 }
 
 class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
@@ -489,7 +659,8 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
 
       for (int i = 0; i < pdfDoc.pages.count; i++) {
         try {
-          final text = extractor.extractText(startPageIndex: i, endPageIndex: i);
+          final text =
+              extractor.extractText(startPageIndex: i, endPageIndex: i);
           pages.add(PageText(pageNumber: i, text: text));
         } catch (_) {
           pages.add(PageText(pageNumber: i, text: ''));
@@ -509,7 +680,8 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
       final engine = await ref.read(aiEngineProvider.future);
       _engineName = engine.engineName;
 
-      final result = await engine.summarizeChapter(pages: pages, allPages: pages);
+      final result =
+          await engine.summarizeChapter(pages: pages, allPages: pages);
       _summaryCache[widget.bookId] = result.sentences;
 
       if (!mounted) return;
@@ -551,32 +723,43 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
                   margin: const EdgeInsets.symmetric(vertical: 16),
                   width: 36,
                   height: 4,
-                  decoration: BoxDecoration(color: const Color(0xFFE5E4E0), borderRadius: BorderRadius.circular(2)),
+                  decoration: BoxDecoration(
+                      color: const Color(0xFFE5E4E0),
+                      borderRadius: BorderRadius.circular(2)),
                 ),
               ),
               Row(
                 children: [
-                  const Icon(Icons.auto_awesome_rounded, size: 20, color: textMain),
+                  const Icon(Icons.auto_awesome_rounded,
+                      size: 20, color: textMain),
                   const SizedBox(width: 8),
                   Text(
                     'AI Summary',
-                    style: GoogleFonts.archivo(fontSize: 18, fontWeight: FontWeight.w700, color: textMain),
+                    style: GoogleFonts.archivo(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: textMain),
                   ),
                   const Spacer(),
                   if (_engineName.isNotEmpty)
                     Text(
                       _engineName,
-                      style: GoogleFonts.archivo(fontSize: 10, fontWeight: FontWeight.w700, color: muted, letterSpacing: 0.5),
+                      style: GoogleFonts.archivo(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: muted,
+                          letterSpacing: 0.5),
                     ),
                 ],
               ),
               const SizedBox(height: 24),
-
               if (_sentences == null && !_loading && _error == null) ...[
                 OutlinedButton.icon(
                   onPressed: _generateSummary,
                   icon: const Icon(Icons.bolt_rounded, color: textMain),
-                  label: Text('Generate', style: GoogleFonts.archivo(color: textMain, fontWeight: FontWeight.w600)),
+                  label: Text('Generate',
+                      style: GoogleFonts.archivo(
+                          color: textMain, fontWeight: FontWeight.w600)),
                   style: OutlinedButton.styleFrom(
                     side: const BorderSide(color: textMain),
                     padding: const EdgeInsets.symmetric(vertical: 16),
@@ -589,23 +772,24 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
                   style: GoogleFonts.archivo(fontSize: 12, color: muted),
                 ),
               ],
-
               if (_loading)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 40),
-                  child: Center(child: CircularProgressIndicator(color: textMain)),
+                  child:
+                      Center(child: CircularProgressIndicator(color: textMain)),
                 ),
-
               if (_error != null)
-                Text(_error!, style: GoogleFonts.archivo(color: Colors.red.shade600), textAlign: TextAlign.center),
-
+                Text(_error!,
+                    style: GoogleFonts.archivo(color: Colors.red.shade600),
+                    textAlign: TextAlign.center),
               if (_sentences != null)
                 ..._sentences!.asMap().entries.map((entry) {
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 16),
                     child: Text(
                       '${entry.key + 1}. ${entry.value}',
-                      style: GoogleFonts.newsreader(fontSize: 18, color: textMain, height: 1.5),
+                      style: GoogleFonts.newsreader(
+                          fontSize: 18, color: textMain, height: 1.5),
                     ),
                   );
                 }),
