@@ -21,6 +21,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   // ── State Variables ───────────────────────────────────────────────────────
   // Note: Dark mode is handled globally by Riverpod now, so it's not here!
   bool _keepAwake = true;
+  String _defaultZoom = 'Fit Page';
 
   String _storageUsed = 'Calculating...';
   String _cacheSize = 'Calculating...';
@@ -39,6 +40,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _keepAwake = prefs.getBool('keepAwake') ?? true;
+      _defaultZoom = prefs.getString('defaultZoom') ?? 'Fit Page';
     });
     
     if (_keepAwake) {
@@ -177,7 +179,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ref.read(themeProvider.notifier).toggle(val);
             }, cs.onSurface, cs.primary),
             _buildDivider(cs.outlineVariant),
-            _buildNavTile('Typography', cs.onSurface, cs.onSurfaceVariant),
+            _buildNavTile('Typography', cs.onSurface, cs.onSurfaceVariant, trailingText: ref.watch(typographyProvider), onTap: _showTypographyOptions),
           ]),
 
           // ── Reading ─────────────────────────────────────────────────────
@@ -185,7 +187,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildSectionGroup(cs.outlineVariant, cs.surface, [
             _buildSwitchTile('Keep Screen Awake', _keepAwake, _toggleKeepAwake, cs.onSurface, cs.primary),
             _buildDivider(cs.outlineVariant),
-            _buildNavTile('Default Zoom', cs.onSurface, cs.onSurfaceVariant, trailingText: 'Fit Width'),
+            _buildNavTile('Default Zoom', cs.onSurface, cs.onSurfaceVariant, trailingText: _defaultZoom, onTap: _showZoomOptions),
           ]),
 
           // ── Storage ─────────────────────────────────────────────────────
@@ -203,12 +205,95 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildSectionGroup(cs.outlineVariant, cs.surface, [
             _buildInfoTile('Version', '1.0.0 (Build 1)', cs.onSurface, cs.onSurfaceVariant),
             _buildDivider(cs.outlineVariant),
-            _buildNavTile('Privacy Policy', cs.onSurface, cs.onSurfaceVariant),
+            _buildNavTile('Privacy Policy', cs.onSurface, cs.onSurfaceVariant, onTap: () {
+              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const StaticDocScreen(
+                title: 'Privacy Policy',
+                content: 'AeroPDF takes your data protection seriously.\n\nWe ensure optimal storage compliance protocols across all file caches. Your data stays locally accessible on-device.',
+              )));
+            }),
             _buildDivider(cs.outlineVariant),
-            _buildNavTile('Terms of Service', cs.onSurface, cs.onSurfaceVariant),
+            _buildNavTile('Terms of Service', cs.onSurface, cs.onSurfaceVariant, onTap: () {
+              Navigator.of(context).push(MaterialPageRoute(builder: (_) => const StaticDocScreen(
+                title: 'Terms of Service',
+                content: 'By interacting with AeroPDF layouts, you acknowledge baseline usage allowances accordingly.\n\nAll data structures belong securely to native offline memory paths.',
+              )));
+            }),
           ]),
         ],
       ),
+    );
+  }
+
+  void _showTypographyOptions() {
+    final cs = Theme.of(context).colorScheme;
+    final options = ['Inter', 'Roboto', 'Outfit', 'Archivo'];
+    final currentFont = ref.read(typographyProvider);
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: cs.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Text('Typography', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: cs.onSurface)),
+              ),
+              Divider(color: cs.outlineVariant, height: 1),
+              ...options.map((opt) => ListTile(
+                title: Text(opt, style: TextStyle(color: cs.onSurface)),
+                trailing: currentFont == opt ? Icon(Icons.check, color: cs.primary) : null,
+                onTap: () {
+                  ref.read(typographyProvider.notifier).setTypography(opt);
+                  Navigator.of(context).pop();
+                },
+              )),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showZoomOptions() {
+    final cs = Theme.of(context).colorScheme;
+    final options = ['Fit Page', 'Fit Width', '100%', '150%'];
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: cs.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Text('Default Zoom', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: cs.onSurface)),
+              ),
+              Divider(color: cs.outlineVariant, height: 1),
+              ...options.map((opt) => ListTile(
+                title: Text(opt, style: TextStyle(color: cs.onSurface)),
+                trailing: _defaultZoom == opt ? Icon(Icons.check, color: cs.primary) : null,
+                onTap: () async {
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setString('defaultZoom', opt);
+                  setState(() => _defaultZoom = opt);
+                  Navigator.of(context).pop();
+                },
+              )),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -270,9 +355,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildNavTile(String title, Color textMain, Color textMuted, {String? trailingText}) {
+  Widget _buildNavTile(String title, Color textMain, Color textMuted, {String? trailingText, VoidCallback? onTap}) {
     return InkWell(
-      onTap: () {}, 
+      onTap: onTap, 
       child: SizedBox(
         height: 48,
         child: Padding(
@@ -311,6 +396,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               Text(value, style: TextStyle(fontSize: 15, color: textMuted)),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class StaticDocScreen extends StatelessWidget {
+  final String title;
+  final String content;
+
+  const StaticDocScreen({super.key, required this.title, required this.content});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      appBar: AppBar(
+        title: Text(title, style: TextStyle(color: cs.onSurface, fontSize: 18, fontWeight: FontWeight.w600)),
+        centerTitle: true,
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: cs.onSurface),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          content,
+          style: TextStyle(color: cs.onSurfaceVariant, fontSize: 14, height: 1.6),
         ),
       ),
     );

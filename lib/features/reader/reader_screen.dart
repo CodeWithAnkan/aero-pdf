@@ -11,6 +11,7 @@ import 'package:isar/isar.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart' as sf_pdf;
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:syncfusion_flutter_core/theme.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/db/isar_service.dart';
 import '../../core/models/book.dart';
@@ -73,6 +74,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   int _currentPage = 0;
   int _initialPageNumber = 1;
   int _totalPages = 1;
+  double _initialZoom = 1.0;
+  PdfPageLayoutMode _layoutMode = PdfPageLayoutMode.continuous;
 
   late final PdfViewerController _pdfController;
   late final UndoHistoryController _undoController;
@@ -111,10 +114,25 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         return;
       }
 
+      final prefs = await SharedPreferences.getInstance();
+      final zoomStr = prefs.getString('defaultZoom') ?? 'Fit Page';
+      double zoomVal = 1.0;
+      PdfPageLayoutMode layoutVal = PdfPageLayoutMode.continuous;
+      
+      if (zoomStr == '150%') {
+        zoomVal = 1.5;
+      } else if (zoomStr == 'Fit Page') {
+        layoutVal = PdfPageLayoutMode.single;
+      }
+
+      final exitPage = prefs.getInt('exit_page_${book.id}') ?? book.lastReadPage;
+
       setState(() {
         _book = book;
+        _initialZoom = zoomVal;
+        _layoutMode = layoutVal;
         _currentPage =
-            widget.initialPage > 0 ? widget.initialPage : book.lastReadPage;
+            widget.initialPage > 0 ? widget.initialPage : exitPage;
         _initialPageNumber = _currentPage + 1;
         _isLoading = false;
       });
@@ -136,6 +154,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final book = _book;
     if (book == null) return;
     try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('exit_page_${book.id}', _currentPage);
+
       final isar = await IsarService.instance;
       await isar.writeTxn(() async {
         if (_currentPage > book.lastReadPage) {
@@ -190,10 +211,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
 
   void _onScrub(double value) {
     _scrollProgress.value = value;
-    if (_maxScrollExtent > 0) {
-      _pdfController.jumpTo(yOffset: value * _maxScrollExtent);
-    } else {
-      final targetPage = (value * (_totalPages - 1)).round() + 1;
+    if (_totalPages > 1) {
+      final targetPage = ((value * (_totalPages - 1)).round() + 1).clamp(1, _totalPages);
       _pdfController.jumpToPage(targetPage);
     }
   }
@@ -370,8 +389,10 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       canShowScrollHead: false,
       canShowScrollStatus: false,
       canShowPaginationDialog: false,
+      canShowPageLoadingIndicator: false,
       enableTextSelection: true,
       enableDoubleTapZooming: true,
+      enableDocumentLinkAnnotation: false,
       onTextSelectionChanged: (PdfTextSelectionChangedDetails details) {
         if (details.selectedText != null) {
           HapticFeedback.lightImpact();
@@ -381,11 +402,17 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
         });
       },
       initialPageNumber: _initialPageNumber.clamp(1, 999999),
-      pageLayoutMode: PdfPageLayoutMode.continuous,
-      scrollDirection: PdfScrollDirection.vertical,
+      initialZoomLevel: _initialZoom,
+      pageLayoutMode: _layoutMode,
+      scrollDirection: _layoutMode == PdfPageLayoutMode.single
+          ? PdfScrollDirection.horizontal
+          : PdfScrollDirection.vertical,
       pageSpacing: 4,
       onDocumentLoaded: (details) {
         setState(() => _totalPages = _pdfController.pageCount);
+        if (_totalPages > 1) {
+          _scrollProgress.value = _currentPage / (_totalPages - 1);
+        }
         if (_pdfController.pageCount == 1) {
           _saveProgress();
         }
@@ -424,8 +451,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
       child: Stack(
         children: [
           Positioned(
-            top: _viewerPadded ? topBarHeight : 0,
-            bottom: _viewerPadded ? bottomBarHeight : 0,
+            top: (_layoutMode == PdfPageLayoutMode.continuous && _viewerPadded) ? topBarHeight : 0,
+            bottom: 0,
             left: 0,
             right: 0,
             child: NotificationListener<ScrollNotification>(

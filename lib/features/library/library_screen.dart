@@ -194,21 +194,30 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                         Expanded(
                           child: Container(
                             height: 40,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
                             decoration: BoxDecoration(
                               color: cs.surfaceContainerHighest.withOpacity(0.4),
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: TextField(
-                              focusNode: _searchFocusNode,
-                              onChanged: (val) => setState(() => _searchQuery = val),
-                              style: TextStyle(color: cs.onSurface, fontSize: 14),
-                              decoration: InputDecoration(
-                                hintText: 'Search PDFs...',
-                                hintStyle: TextStyle(color: cs.onSurfaceVariant, fontSize: 14),
-                                prefixIcon: Icon(Icons.search_rounded, color: cs.onSurfaceVariant, size: 18),
-                                border: InputBorder.none,
-                                contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                              ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.search_rounded, color: cs.onSurfaceVariant, size: 18),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: TextField(
+                                    focusNode: _searchFocusNode,
+                                    onChanged: (val) => setState(() => _searchQuery = val),
+                                    style: TextStyle(color: cs.onSurface, fontSize: 14),
+                                    decoration: InputDecoration(
+                                      hintText: 'Search PDFs...',
+                                      hintStyle: TextStyle(color: cs.onSurfaceVariant, fontSize: 14),
+                                      border: InputBorder.none,
+                                      isDense: true,
+                                      contentPadding: EdgeInsets.zero,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),

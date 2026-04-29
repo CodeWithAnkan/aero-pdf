@@ -1,6 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class AppTheme {
+  static ThemeData getTheme({required bool isDark, required String fontFamily}) {
+    final baseTheme = isDark ? darkTheme : lightTheme;
+    return baseTheme.copyWith(
+      textTheme: GoogleFonts.getTextTheme(fontFamily, baseTheme.textTheme),
+    );
+  }
+
   static ThemeData get lightTheme {
     return ThemeData(
       brightness: Brightness.light,

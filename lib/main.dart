@@ -42,16 +42,16 @@ class AeroPdfApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     // 1. Listen to the current theme mode
     final isDarkMode = ref.watch(themeProvider);
+    final font = ref.watch(typographyProvider);
 
     return MaterialApp.router(
       title: 'AeroPDF',
       debugShowCheckedModeBanner: false,
       routerConfig: router,
       
-      // 2. Dynamically apply light or dark mode based on the provider
       themeMode: isDarkMode ? ThemeMode.dark : ThemeMode.light,
-      theme: AppTheme.lightTheme,
-      darkTheme: AppTheme.darkTheme, 
+      theme: AppTheme.getTheme(isDark: false, fontFamily: font),
+      darkTheme: AppTheme.getTheme(isDark: true, fontFamily: font), 
     );
   }
 }
