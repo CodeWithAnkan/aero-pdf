@@ -10,6 +10,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:isar/isar.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart' as sf_pdf;
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
+import 'package:syncfusion_flutter_core/theme.dart';
 
 import '../../core/db/isar_service.dart';
 import '../../core/models/book.dart';
@@ -44,6 +45,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   bool _isLoading = true;
   bool _showUi = true;
   bool _viewerPadded = true;
+  bool _hasSelection = false;
 
   static const _barAnimDuration = Duration(milliseconds: 220);
 
@@ -136,7 +138,9 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     try {
       final isar = await IsarService.instance;
       await isar.writeTxn(() async {
-        book.lastReadPage = _currentPage;
+        if (_currentPage > book.lastReadPage) {
+          book.lastReadPage = _currentPage;
+        }
         book.lastOpened = DateTime.now();
         await isar.books.put(book);
       });
@@ -153,9 +157,34 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
 
     _maxScrollExtent = notification.metrics.maxScrollExtent;
-    final progress =
-        (notification.metrics.pixels / _maxScrollExtent).clamp(0.0, 1.0);
-    _scrollProgress.value = progress;
+    final pixels = notification.metrics.pixels;
+    final viewportHeight = notification.metrics.viewportDimension;
+    _scrollProgress.value = (pixels / _maxScrollExtent).clamp(0.0, 1.0);
+
+    final totalHeight = _maxScrollExtent + viewportHeight;
+    final pageHeight = totalHeight / _totalPages;
+
+    int detectedPage = 0;
+    for (int i = 0; i < _totalPages; i++) {
+      final bottomEdge = (i + 1) * pageHeight;
+      final distFromTop = bottomEdge - pixels;
+      final ratio = distFromTop / viewportHeight;
+      if (ratio <= 0.60) {
+        detectedPage = i + 1;
+      } else {
+        break;
+      }
+    }
+
+    detectedPage = detectedPage.clamp(0, _totalPages - 1);
+
+    if (detectedPage != _currentPage) {
+      setState(() {
+        _currentPage = detectedPage;
+      });
+      _checkAndTriggerOcr(detectedPage);
+      _saveProgress();
+    }
     return false;
   }
 
@@ -236,45 +265,42 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     final cs = Theme.of(context).colorScheme;
     final bgLight = Theme.of(context).scaffoldBackgroundColor;
 
-    if (_isLoading) {
-      return Scaffold(
-          backgroundColor: bgLight,
-          body: Center(child: CircularProgressIndicator(color: cs.onSurface)));
-    }
-
-    if (_error != null || _book == null) {
-      return Scaffold(
-        backgroundColor: bgLight,
-        appBar: AppBar(
-          backgroundColor: bgLight,
-          elevation: 0,
-          leading: IconButton(
-              icon: Icon(Icons.arrow_back, color: cs.onSurface),
-              onPressed: () => context.pop()),
-        ),
-        body: Center(
-            child: Text(_error ?? 'Unknown error',
-                style: TextStyle(color: cs.onSurface))),
-      );
-    }
-
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        if (_isSearching) {
-          _closeSearch();
-          return;
-        }
-        if (_showUi) {
-          _setShowUi(false);
-          return;
-        }
-        context.pop();
-      },
-      child: Scaffold(
-        backgroundColor: bgLight,
-        body: _isSearching ? _buildSearchLayout(cs, bgLight) : _buildReaderLayout(cs, bgLight),
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 400),
+        child: _isLoading
+            ? Center(
+                key: const ValueKey('loading'),
+                child: CircularProgressIndicator(color: cs.onSurface),
+              )
+            : _error != null || _book == null
+                ? Center(
+                    key: const ValueKey('error'),
+                    child: Text(
+                      _error ?? 'Unknown error',
+                      style: TextStyle(color: cs.onSurface),
+                    ),
+                  )
+                : PopScope(
+                    key: const ValueKey('content'),
+                    canPop: false,
+                    onPopInvokedWithResult: (didPop, _) {
+                      if (didPop) return;
+                      if (_isSearching) {
+                        _closeSearch();
+                        return;
+                      }
+                      if (_hasSelection) {
+                        _pdfController.clearSelection();
+                        return;
+                      }
+                      context.pop();
+                    },
+                    child: _isSearching
+                        ? _buildSearchLayout(cs, bgLight)
+                        : _buildReaderLayout(cs, bgLight),
+                  ),
       ),
     );
   }
@@ -307,10 +333,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
     }
   }
 
-  void _undoAnnotation() {
-    _undoController.undo();
-  }
-
   Future<void> _saveAnnotations() async {
     try {
       // Extract the PDF bytes with annotations baked in
@@ -336,33 +358,52 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
   }
 
   Widget _buildPdfViewer() {
-    return SfPdfViewer.file(
-      File(_book!.filePath),
-      key: _pdfViewerKey,
-      controller: _pdfController,
+    return SfPdfViewerTheme(
+      data: SfPdfViewerThemeData(
+        backgroundColor: Colors.black,
+      ),
+      child: SfPdfViewer.file(
+        File(_book!.filePath),
+        key: _pdfViewerKey,
+        controller: _pdfController,
       undoController: _undoController,
       canShowScrollHead: false,
       canShowScrollStatus: false,
       canShowPaginationDialog: false,
       enableTextSelection: true,
       enableDoubleTapZooming: true,
+      onTextSelectionChanged: (PdfTextSelectionChangedDetails details) {
+        if (details.selectedText != null) {
+          HapticFeedback.lightImpact();
+        }
+        setState(() {
+          _hasSelection = details.selectedText != null;
+        });
+      },
       initialPageNumber: _initialPageNumber.clamp(1, 999999),
       pageLayoutMode: PdfPageLayoutMode.continuous,
       scrollDirection: PdfScrollDirection.vertical,
       pageSpacing: 4,
       onDocumentLoaded: (details) {
         setState(() => _totalPages = _pdfController.pageCount);
+        if (_pdfController.pageCount == 1) {
+          _saveProgress();
+        }
       },
       onPageChanged: (details) {
         final newIdx = details.newPageNumber - 1;
-        setState(() => _currentPage = newIdx);
+        setState(() {
+          _currentPage = newIdx;
+        });
         if (_totalPages > 1) {
           _scrollProgress.value = _currentPage / (_totalPages - 1);
         }
         _checkAndTriggerOcr(newIdx);
+        _saveProgress();
       },
-    );
-  }
+    ),
+  );
+}
 
   Widget _buildSearchLayout(ColorScheme cs, Color bgLight) {
     return SafeArea(
@@ -405,7 +446,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
             child: GestureDetector(
               behavior: HitTestBehavior.translucent,
               onTap: () {
-                _setShowUi(!_showUi);
+                if (_hasSelection) {
+                  _pdfController.clearSelection();
+                } else {
+                  _setShowUi(!_showUi);
+                }
                 HapticFeedback.selectionClick();
               },
             ),
@@ -415,7 +460,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           AnimatedPositioned(
             duration: _barAnimDuration,
             curve: Curves.easeInOut,
-            top: _showUi ? 0 : -topBarHeight,
+            top: _showUi ? 0 : -300,
             left: 0,
             right: 0,
             child: Container(
@@ -428,7 +473,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
           AnimatedPositioned(
             duration: _barAnimDuration,
             curve: Curves.easeInOut,
-            bottom: _showUi ? 0 : -bottomBarHeight,
+            bottom: _showUi ? 0 : -300,
             left: 0,
             right: 0,
             child: Container(
@@ -511,19 +556,61 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen> {
               textAlign: TextAlign.center,
             ),
           ),
-          IconButton(
-              icon: Icon(Icons.undo_rounded, color: cs.onSurface, size: 20),
-              onPressed: _undoAnnotation),
-          IconButton(
-              icon: Icon(Icons.save_rounded, color: cs.onSurface, size: 20),
-              onPressed: _saveAnnotations),
-          IconButton(
-              icon: Icon(Icons.auto_awesome_rounded,
-                  color: cs.onSurface, size: 20),
-              onPressed: _openInsightsPanel),
-          IconButton(
-              icon: Icon(Icons.search_rounded, color: cs.onSurface, size: 22),
-              onPressed: _startSearch),
+          ValueListenableBuilder<UndoHistoryValue>(
+            valueListenable: _undoController,
+            builder: (context, undoValue, _) {
+              final hasEdits = undoValue.canUndo;
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (hasEdits) ...[
+                    IconButton(
+                      icon: Icon(Icons.undo_rounded,
+                          color: undoValue.canUndo ? cs.onSurface : cs.onSurfaceVariant.withOpacity(0.4), size: 20),
+                      onPressed: undoValue.canUndo ? () => _undoController.undo() : null,
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.save_rounded,
+                          color: cs.onSurface, size: 20),
+                      onPressed: _saveAnnotations,
+                    ),
+                  ],
+                ],
+              );
+            },
+          ),
+          PopupMenuButton<int>(
+            icon: Icon(Icons.more_vert_rounded, color: cs.onSurface),
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 1,
+                child: Row(
+                  children: [
+                    Icon(Icons.search_rounded, color: cs.onSurface),
+                    const SizedBox(width: 12),
+                    const Text('Search Document'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 2,
+                child: Row(
+                  children: [
+                    Icon(Icons.auto_awesome_rounded, color: cs.onSurface),
+                    const SizedBox(width: 12),
+                    const Text('AI Insights'),
+                  ],
+                ),
+              ),
+            ],
+            onSelected: (value) {
+              if (value == 1) {
+                _startSearch();
+              } else if (value == 2) {
+                _openInsightsPanel();
+              }
+            },
+          ),
         ],
       ),
     );

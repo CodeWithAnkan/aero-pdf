@@ -21,45 +21,53 @@ class _MainScreenState extends State<MainScreen> {
   ];
 
   @override
-  @override
   Widget build(BuildContext context) {
     // Grab dynamic colors
     final cs = Theme.of(context).colorScheme;
     final bgLight = Theme.of(context).scaffoldBackgroundColor;
 
-    return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _screens,
-      ),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          border: Border(top: BorderSide(color: cs.outlineVariant)), 
+    return PopScope(
+      canPop: _currentIndex == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_currentIndex != 0) {
+          setState(() => _currentIndex = 0);
+        }
+      },
+      child: Scaffold(
+        body: IndexedStack(
+          index: _currentIndex,
+          children: _screens,
         ),
-        child: BottomNavigationBar(
-          currentIndex: _currentIndex,
-          onTap: (index) => setState(() => _currentIndex = index),
-          backgroundColor: bgLight, // Dynamic background
-          elevation: 0,
-          selectedItemColor: cs.onSurface, // Dynamic selected icon (Black/White)
-          unselectedItemColor: cs.onSurfaceVariant, // Dynamic unselected icon (Grey)
-          selectedFontSize: 12,
-          unselectedFontSize: 12,
-          type: BottomNavigationBarType.fixed,
-          items: const [
-            BottomNavigationBarItem(
-              icon: Padding(padding: EdgeInsets.only(bottom: 4, top: 8), child: Icon(Icons.book_rounded)),
-              label: 'Library',
-            ),
-            BottomNavigationBarItem(
-              icon: Padding(padding: EdgeInsets.only(bottom: 4, top: 8), child: Icon(Icons.search_rounded)),
-              label: 'Search',
-            ),
-            BottomNavigationBarItem(
-              icon: Padding(padding: EdgeInsets.only(bottom: 4, top: 8), child: Icon(Icons.settings_rounded)),
-              label: 'Settings',
-            ),
-          ],
+        bottomNavigationBar: Container(
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: cs.outlineVariant)), 
+          ),
+          child: BottomNavigationBar(
+            currentIndex: _currentIndex,
+            onTap: (index) => setState(() => _currentIndex = index),
+            backgroundColor: bgLight, // Dynamic background
+            elevation: 0,
+            selectedItemColor: cs.onSurface, // Dynamic selected icon (Black/White)
+            unselectedItemColor: cs.onSurfaceVariant, // Dynamic unselected icon (Grey)
+            selectedFontSize: 12,
+            unselectedFontSize: 12,
+            type: BottomNavigationBarType.fixed,
+            items: const [
+              BottomNavigationBarItem(
+                icon: Padding(padding: EdgeInsets.only(bottom: 4, top: 8), child: Icon(Icons.book_rounded)),
+                label: 'Library',
+              ),
+              BottomNavigationBarItem(
+                icon: Padding(padding: EdgeInsets.only(bottom: 4, top: 8), child: Icon(Icons.search_rounded)),
+                label: 'Search',
+              ),
+              BottomNavigationBarItem(
+                icon: Padding(padding: EdgeInsets.only(bottom: 4, top: 8), child: Icon(Icons.settings_rounded)),
+                label: 'Settings',
+              ),
+            ],
+          ),
         ),
       ),
     );

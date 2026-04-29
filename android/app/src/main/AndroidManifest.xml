@@ -9,7 +9,7 @@
     <application
         android:label="AeroPDF"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/launcher_icon">
         <!-- AICore for Gemini Nano on-device AI (optional — app works without it) -->
         <uses-library
             android:name="com.google.android.aicore"

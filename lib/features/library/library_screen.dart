@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../core/models/book.dart';
 import 'library_provider.dart';
@@ -15,10 +17,13 @@ class LibraryScreen extends ConsumerStatefulWidget {
 }
 
 class _LibraryScreenState extends ConsumerState<LibraryScreen> {
+  String _searchQuery = '';
+  bool _sortByRecent = true;
+  final FocusNode _searchFocusNode = FocusNode();
   
   // ── Removal Logic ──────────────────────────────────────────────────────────
 
-  void _showRemoveSheet(Book book) {
+  void _showOptionsSheet(Book book) {
     final cs = Theme.of(context).colorScheme;
 
     showModalBottomSheet(
@@ -31,7 +36,6 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Notion-style drag handle
             Container(
               margin: const EdgeInsets.only(top: 10, bottom: 10),
               width: 40, height: 4,
@@ -41,10 +45,40 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               ),
             ),
             ListTile(
-              leading: Icon(Icons.close_rounded, color: cs.onSurface),
+              leading: Icon(Icons.edit_outlined, color: cs.onSurface),
+              title: const Text('Rename PDF', 
+                style: TextStyle(fontWeight: FontWeight.w500)),
+              onTap: () {
+                Navigator.pop(context);
+                _showRenameDialog(book);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.share_outlined, color: cs.onSurface),
+              title: const Text('Share PDF', 
+                style: TextStyle(fontWeight: FontWeight.w500)),
+              onTap: () {
+                Navigator.pop(context);
+                Share.shareXFiles([XFile(book.filePath)], text: book.title);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.restart_alt_rounded, color: cs.onSurface),
+              title: const Text('Reset Progress', 
+                style: TextStyle(fontWeight: FontWeight.w500)),
+              onTap: () {
+                Navigator.pop(context);
+                ref.read(libraryProvider.notifier).resetProgress(book.id);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.close_rounded, color: Colors.red),
               title: Text('Remove "${book.title}"', 
-                style: const TextStyle(fontWeight: FontWeight.w500)),
-              subtitle: const Text('Removes from workspace. File stays on device.'),
+                style: const TextStyle(fontWeight: FontWeight.w500, color: Colors.red),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: const Text('Removes from workspace. File stays on device.', style: TextStyle(color: Colors.redAccent)),
               onTap: () {
                 ref.read(libraryProvider.notifier).deleteBook(book.id);
                 Navigator.pop(context);
@@ -53,6 +87,46 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             const SizedBox(height: 12),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showRenameDialog(Book book) {
+    final cs = Theme.of(context).colorScheme;
+    final controller = TextEditingController(text: book.title);
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: cs.surface,
+        title: Text('Rename "${book.title}"', style: TextStyle(color: cs.onSurface)),
+        content: TextField(
+          controller: controller,
+          style: TextStyle(color: cs.onSurface),
+          decoration: InputDecoration(
+            hintText: 'Enter new name',
+            hintStyle: TextStyle(color: cs.onSurfaceVariant),
+            enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: cs.outline)),
+            focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: cs.primary)),
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel', style: TextStyle(color: cs.onSurfaceVariant)),
+          ),
+          TextButton(
+            onPressed: () {
+              final newTitle = controller.text.trim();
+              if (newTitle.isNotEmpty) {
+                ref.read(libraryProvider.notifier).renameBook(book.id, newTitle);
+              }
+              Navigator.pop(context);
+            },
+            child: Text('Rename', style: TextStyle(color: cs.primary, fontWeight: FontWeight.w600)),
+          ),
+        ],
       ),
     );
   }
@@ -66,6 +140,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     final recentBooks = state.books.where((b) => b.lastOpened != null).toList()
       ..sort((a, b) => b.lastOpened!.compareTo(a.lastOpened!));
     final displayRecents = recentBooks.take(5).toList();
+
+    if (View.of(context).viewInsets.bottom == 0.0 && _searchFocusNode.hasFocus) {
+      _searchFocusNode.unfocus();
+    }
 
     return Scaffold(
       backgroundColor: bgLight,
@@ -97,7 +175,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                     ),
                     const SizedBox(height: 12),
                     SizedBox(
-                      height: 220,
+                      height: 240,
                       child: ListView.separated(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         scrollDirection: Axis.horizontal,
@@ -106,8 +184,53 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                         itemBuilder: (context, i) => _buildJumpBackInCard(displayRecents[i], cs),
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 12),
                   ],
+
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: cs.surfaceContainerHighest.withOpacity(0.4),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: TextField(
+                              focusNode: _searchFocusNode,
+                              onChanged: (val) => setState(() => _searchQuery = val),
+                              style: TextStyle(color: cs.onSurface, fontSize: 14),
+                              decoration: InputDecoration(
+                                hintText: 'Search PDFs...',
+                                hintStyle: TextStyle(color: cs.onSurfaceVariant, fontSize: 14),
+                                prefixIcon: Icon(Icons.search_rounded, color: cs.onSurfaceVariant, size: 18),
+                                border: InputBorder.none,
+                                contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        PopupMenuButton<bool>(
+                          initialValue: _sortByRecent,
+                          icon: Icon(Icons.sort_rounded, color: cs.onSurface),
+                          onSelected: (val) => setState(() => _sortByRecent = val),
+                          itemBuilder: (context) => [
+                            const PopupMenuItem(
+                              value: true,
+                              child: Text('Recently Added'),
+                            ),
+                            const PopupMenuItem(
+                              value: false,
+                              child: Text('Previously Added'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
 
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
@@ -115,14 +238,26 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
                   ),
                   Container(
                     decoration: BoxDecoration(border: Border(top: BorderSide(color: cs.outlineVariant))),
-                    child: state.books.isEmpty 
-                      ? Padding(
+                    child: () {
+                      final filteredBooks = state.books.where((b) {
+                        return b.title.toLowerCase().contains(_searchQuery.toLowerCase());
+                      }).toList();
+                      
+                      if (!_sortByRecent) {
+                        filteredBooks.sort((a, b) => a.id.compareTo(b.id));
+                      }
+
+                      if (filteredBooks.isEmpty) {
+                        return Padding(
                           padding: const EdgeInsets.symmetric(vertical: 40),
-                          child: Center(child: Text("Empty workspace", style: TextStyle(color: cs.onSurfaceVariant))),
-                        )
-                      : Column(
-                          children: state.books.map((book) => _buildNotionListTile(book, cs)).toList(),
-                        ),
+                          child: Center(child: Text("No documents found", style: TextStyle(color: cs.onSurfaceVariant))),
+                        );
+                      }
+
+                      return Column(
+                        children: filteredBooks.map((book) => _buildNotionListTile(book, cs)).toList(),
+                      );
+                    }(),
                   ),
                 ],
               ),
@@ -138,11 +273,19 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   }
 
   Widget _buildJumpBackInCard(Book book, ColorScheme cs) {
-    final progress = book.totalPages > 0 ? book.lastReadPage / book.totalPages : 0.0;
+    final progress = (book.totalPages == 0 || book.lastReadPage < 0)
+        ? 0.0
+        : (book.totalPages <= 1 ? 1.0 : book.lastReadPage / (book.totalPages - 1));
     
     return GestureDetector(
-      onTap: () => context.push('/reader/${book.id}'),
-      onLongPress: () => _showRemoveSheet(book), // ── WIRE UP LONG PRESS
+      onTap: () async {
+        await context.push('/reader/${book.id}');
+        ref.read(libraryProvider.notifier).loadBooks();
+      },
+      onLongPress: () {
+        HapticFeedback.heavyImpact();
+        _showOptionsSheet(book);
+      },
       child: SizedBox(
         width: 120,
         child: Column(
@@ -166,21 +309,32 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             ),
             const SizedBox(height: 8),
             Expanded(
-              child: Text(
-                book.title,
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: cs.onSurface, height: 1.2),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            Container(
-              height: 2,
-              width: double.infinity,
-              decoration: BoxDecoration(color: cs.outlineVariant, borderRadius: BorderRadius.circular(2)),
-              alignment: Alignment.centerLeft,
-              child: FractionallySizedBox(
-                widthFactor: progress.clamp(0.0, 1.0),
-                child: Container(decoration: BoxDecoration(color: cs.primary, borderRadius: BorderRadius.circular(2))),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    book.title,
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: cs.onSurface, height: 1.2),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        _formatLastOpened(book.lastOpened),
+                        style: TextStyle(fontSize: 10, color: cs.onSurfaceVariant),
+                      ),
+                      Text(
+                        '${(progress * 100).round()}%',
+                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: cs.primary),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ],
@@ -189,13 +343,30 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     );
   }
 
+  String _formatLastOpened(DateTime? date) {
+    if (date == null) return '';
+    final now = DateTime.now();
+    final isToday = date.year == now.year && date.month == now.month && date.day == now.day;
+    if (isToday) {
+      final hour = date.hour.toString().padLeft(2, '0');
+      final minute = date.minute.toString().padLeft(2, '0');
+      return 'Opened $hour:$minute';
+    } else {
+      final day = date.day.toString().padLeft(2, '0');
+      final month = date.month.toString().padLeft(2, '0');
+      return 'Opened $day/$month';
+    }
+  }
+
   Widget _buildNotionListTile(Book book, ColorScheme cs) {
     return InkWell(
-      onTap: () => context.push('/reader/${book.id}'),
-      onLongPress: () => _showRemoveSheet(book), // ── WIRE UP LONG PRESS
+      onTap: () async {
+        await context.push('/reader/${book.id}');
+        ref.read(libraryProvider.notifier).loadBooks();
+      },
+      onLongPress: () => _showOptionsSheet(book), // ── WIRE UP LONG PRESS
       child: Container(
-        height: 48,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(border: Border(bottom: BorderSide(color: cs.outlineVariant))),
         child: Row(
           children: [
@@ -205,10 +376,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               child: Text(
                 book.title,
                 style: TextStyle(fontSize: 15, color: cs.onSurface),
-                maxLines: 1,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
+            const SizedBox(width: 20),
             _FileSizeWidget(filePath: book.filePath),
           ],
         ),
@@ -228,9 +400,22 @@ class _FileSizeWidget extends StatelessWidget {
       future: File(filePath).length(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Text('', style: TextStyle(fontSize: 12));
-        final mb = snapshot.data! / (1024 * 1024);
+        final bytes = snapshot.data!;
+        final String sizeStr;
+        
+        if (bytes < 1024 * 1024) {
+          final kb = bytes / 1024;
+          sizeStr = '${kb.toStringAsFixed(1)} KB';
+        } else if (bytes < 1024 * 1024 * 1024) {
+          final mb = bytes / (1024 * 1024);
+          sizeStr = '${mb.toStringAsFixed(1)} MB';
+        } else {
+          final gb = bytes / (1024 * 1024 * 1024);
+          sizeStr = '${gb.toStringAsFixed(1)} GB';
+        }
+
         return Text(
-          '${mb.toStringAsFixed(1)} MB',
+          sizeStr,
           style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: cs.onSurfaceVariant),
         );
       },

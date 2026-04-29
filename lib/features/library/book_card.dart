@@ -56,7 +56,7 @@ class BookListTile extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 12),
                   
                   Row(
                     children: [
@@ -69,13 +69,13 @@ class BookListTile extends StatelessWidget {
                       _FileSizeWidget(filePath: book.filePath),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 14),
                   
                   ClipRRect(
                     borderRadius: BorderRadius.circular(2),
                     child: LinearProgressIndicator(
                       value: progress,
-                      minHeight: 3,
+                      minHeight: 6,
                       backgroundColor: cs.surfaceContainerHigh,
                       color: cs.primary,
                     ),

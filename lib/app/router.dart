@@ -3,9 +3,21 @@ import '../features/library/folder_screen.dart';
 import '../features/navigation/main_screen.dart';
 import '../features/reader/reader_screen.dart';
 import '../features/search/search_screen.dart';
+import '../features/library/import_intent_screen.dart';
 
 final router = GoRouter(
   initialLocation: '/',
+  // 1. Intercept Android file intents before GoRouter crashes
+  redirect: (context, state) {
+    final uriString = state.uri.toString();
+    
+    // Catch external intents from WhatsApp/Files app
+    if (uriString.startsWith('content://') || uriString.startsWith('file://')) {
+      // Pass the raw URI to the import screen safely
+      return '/import?uri=${Uri.encodeComponent(uriString)}';
+    }
+    return null; // Return null to proceed normally for standard routes
+  },
   routes: [
     GoRoute(
       path: '/',
@@ -27,7 +39,7 @@ final router = GoRouter(
 
         return ReaderScreen(
           bookId: bookId,
-          initialPage: initialPage, // Make sure your ReaderScreen accepts this!
+          initialPage: initialPage, 
         );
       },
     ),
@@ -40,7 +52,15 @@ final router = GoRouter(
       path: '/search/:bookId',
       builder: (context, state) {
         final bookId = int.parse(state.pathParameters['bookId']!);
-        return SearchScreen(bookId: bookId); // Update SearchScreen constructor!
+        return SearchScreen(bookId: bookId);
+      },
+    ),
+    // 2. Add the handler route for external intents
+    GoRoute(
+      path: '/import',
+      builder: (context, state) {
+        final uri = state.uri.queryParameters['uri']!;
+        return ImportIntentScreen(intentUri: uri);
       },
     ),
   ],

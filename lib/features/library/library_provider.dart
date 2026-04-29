@@ -58,10 +58,8 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
     state = state.copyWith(isLoading: true, error: null);
     try {
       final isar = await IsarService.instance;
-      final books = await isar.books
-          .where()
-          .sortByLastOpenedDesc()
-          .findAll();
+      final books = await isar.books.where().findAll();
+      books.sort((a, b) => b.id.compareTo(a.id));
       state = state.copyWith(books: books, isLoading: false);
     } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());
@@ -87,7 +85,13 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
     return _addPdf(path);
   }
 
-Future<Book?> _addPdf(String path) async {
+  // ── Public wrapper for external intents ─────────────────────────────────────
+  // Allows the intent handler to pass the resolved file path directly
+  Future<Book?> addPdfFromPath(String path) async {
+    return await _addPdf(path);
+  }
+
+  Future<Book?> _addPdf(String path) async {
     state = state.copyWith(isLoading: true, error: null);
 
     try {
@@ -112,11 +116,19 @@ Future<Book?> _addPdf(String path) async {
         return existing;
       }
 
-      // ── THE FIX: Copy file to permanent storage ──
-      final appDocDir = await getApplicationDocumentsDirectory();
-      final permanentPath = '${appDocDir.path}/$fileName';
-      
-      // Use 'file.copy' instead of 'originalFile.copy'
+      String docsPath = '';
+      if (Platform.isAndroid) {
+        docsPath = '/storage/emulated/0/Documents';
+      } else {
+        docsPath = (await getApplicationDocumentsDirectory()).path;
+      }
+
+      final aeroPdfDir = Directory('$docsPath/AeroPDF');
+      if (!await aeroPdfDir.exists()) {
+        await aeroPdfDir.create(recursive: true);
+      }
+
+      final permanentPath = '${aeroPdfDir.path}/$fileName';
       final savedFile = await file.copy(permanentPath); 
 
       // Open briefly to extract metadata from the PERMANENT path
@@ -178,6 +190,79 @@ Future<Book?> _addPdf(String path) async {
 
     await loadBooks(); 
   }
+
+  // ── Reset progress ──────────────────────────────────────────────────────────
+
+  Future<void> resetProgress(int bookId) async {
+    final isar = await IsarService.instance;
+    final book = await isar.books.get(bookId);
+    if (book != null) {
+      await isar.writeTxn(() async {
+        book.lastReadPage = -1;
+        await isar.books.put(book);
+      });
+      await loadBooks();
+    }
+  }
+
+  // ── Rename book ─────────────────────────────────────────────────────────────
+
+  Future<void> renameBook(int bookId, String newTitle) async {
+    final isar = await IsarService.instance;
+    final book = await isar.books.get(bookId);
+    if (book != null) {
+      try {
+        final file = File(book.filePath);
+        if (await file.exists()) {
+          String docsPath = '';
+          if (Platform.isAndroid) {
+            docsPath = '/storage/emulated/0/Documents';
+          } else {
+            docsPath = (await getApplicationDocumentsDirectory()).path;
+          }
+
+          final aeroPdfDir = Directory('$docsPath/AeroPDF');
+          if (!await aeroPdfDir.exists()) {
+            await aeroPdfDir.create(recursive: true);
+          }
+
+          final safeTitle = newTitle.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+          final newPath = '${aeroPdfDir.path}/$safeTitle.pdf';
+          
+          await file.copy(newPath);
+          await file.delete();
+          
+          await isar.writeTxn(() async {
+            book.title = newTitle;
+            book.filePath = newPath;
+            book.fileName = '$safeTitle.pdf';
+            await isar.books.put(book);
+          });
+          await loadBooks();
+        }
+      } catch (_) {
+        try {
+          final file = File(book.filePath);
+          if (await file.exists()) {
+            final dir = file.parent.path;
+            final safeTitle = newTitle.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+            final newPath = '$dir/$safeTitle.pdf';
+            await file.rename(newPath);
+            
+            await isar.writeTxn(() async {
+              book.title = newTitle;
+              book.filePath = newPath;
+              book.fileName = '$safeTitle.pdf';
+              await isar.books.put(book);
+            });
+            await loadBooks();
+          }
+        } catch (e) {
+          print('[AeroPDF] Rename fallback failed: $e');
+        }
+      }
+    }
+  } 
 
   // ── Mark corrupted ──────────────────────────────────────────────────────────
 
