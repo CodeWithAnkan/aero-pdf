@@ -14,12 +14,24 @@ Future<bool> requestStoragePermission() async {
 
   try {
     final info = await DeviceInfoPlugin().androidInfo;
-    if (info.version.sdkInt >= 33) {
-      // SAF handles its own intent — no manifest permission needed
+    final sdkInt = info.version.sdkInt;
+
+    if (sdkInt >= 30) {
+      // Android 11+ requires MANAGE_EXTERNAL_STORAGE for custom directory access
+      var status = await Permission.manageExternalStorage.status;
+      if (!status.isGranted) {
+        status = await Permission.manageExternalStorage.request();
+      }
+      return status.isGranted;
+    } else if (sdkInt >= 33) {
+      // For picking files, no permission is needed on 13+, 
+      // but for writing to public folders we might still need it.
       return true;
+    } else {
+      // Android < 11
+      final status = await Permission.storage.request();
+      return status.isGranted;
     }
-    final status = await Permission.storage.request();
-    return status.isGranted;
   } catch (e) {
     debugPrint('[AeroPDF] Permission check failed: $e');
     return false;

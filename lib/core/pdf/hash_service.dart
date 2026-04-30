@@ -7,7 +7,7 @@ import 'package:crypto/crypto.dart';
 /// annotations are re-linked instead of creating a duplicate entry.
 Future<String> hashFile(String path) async {
   final file = File(path);
-  final bytes = await file.readAsBytes();
-  final digest = sha256.convert(bytes);
-  return digest.toString();
+  final stream = file.openRead();
+  final hash = await sha256.bind(stream).first;
+  return hash.toString();
 }

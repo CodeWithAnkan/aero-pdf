@@ -88,6 +88,11 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
   // ── Public wrapper for external intents ─────────────────────────────────────
   // Allows the intent handler to pass the resolved file path directly
   Future<Book?> addPdfFromPath(String path) async {
+    final hasPermission = await perms.requestStoragePermission();
+    if (!hasPermission) {
+      state = state.copyWith(isLoading: false, error: 'Storage permission is required to add files to the workspace.');
+      return null;
+    }
     return await _addPdf(path);
   }
 
@@ -95,7 +100,7 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
     state = state.copyWith(isLoading: true, error: null);
 
     try {
-      final file = File(path); // <-- Defined as 'file' here
+      final file = File(path); 
       final fileName = file.uri.pathSegments.last;
       final hash = await hashFile(path);
 
@@ -131,18 +136,16 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
       final permanentPath = '${aeroPdfDir.path}/$fileName';
       final savedFile = await file.copy(permanentPath); 
 
-      // Open briefly to extract metadata from the PERMANENT path
-      final doc = await PdfService.openDocument(savedFile.path);
-      if (doc == null) {
+      // Get page count efficiently without loading full bytes
+      final totalPages = await PdfService.getPageCount(savedFile.path);
+      if (totalPages == 0) {
         state = state.copyWith(
             isLoading: false, error: 'File is corrupted or cannot be opened.');
         return null;
       }
 
       final title = PdfService.extractTitle(fileName);
-      final totalPages = doc.pages.count;
-      doc.dispose();
-
+      
       // Insert new book pointing to permanent storage
       final book = Book()
         ..title = title
@@ -163,7 +166,11 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
       await loadBooks();
       return book;
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      String errorMsg = e.toString();
+      if (errorMsg.contains('Permission denied')) {
+        errorMsg = 'Permission Denied: Please grant "All Files Access" in system settings to use the Documents/AeroPDF folder.';
+      }
+      state = state.copyWith(isLoading: false, error: errorMsg);
       return null;
     }
   }

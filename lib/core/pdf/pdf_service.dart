@@ -2,33 +2,45 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:isar/isar.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
+import 'package:pdfx/pdfx.dart' as pdfx;
+import 'package:syncfusion_flutter_pdf/pdf.dart' as sf;
 
 import '../db/isar_service.dart';
 import '../models/book.dart';
 
 /// Thin wrapper for PDF document operations.
-/// Error handling (password, corrupt, OOM) lives here.
 class PdfService {
   PdfService._();
 
-  /// Opens a [PdfDocument] from [path].
-  /// - Returns null on unrecoverable error (corrupted file).
-  /// - Throws [PdfDocumentException] if the file is password-protected and
-  ///   no password was provided — caller should prompt and retry.
-  static Future<PdfDocument?> openDocument(
+  /// Opens a [sf.PdfDocument] from [path].
+  /// NOTE: This still uses readAsBytes because syncfusion_flutter_pdf requires it
+  /// for manipulation (like saving annotations). Use with caution for large files.
+  static Future<sf.PdfDocument?> openDocument(
     String path, {
     String? password,
   }) async {
     try {
       final bytes = await File(path).readAsBytes();
       if (password != null) {
-        return PdfDocument(inputBytes: bytes, password: password);
+        return sf.PdfDocument(inputBytes: bytes, password: password);
       }
-      return PdfDocument(inputBytes: bytes);
+      return sf.PdfDocument(inputBytes: bytes);
     } catch (e) {
-      debugPrint('[AeroPDF] Failed to open PDF: $e');
+      debugPrint('[AeroPDF] Failed to open PDF for manipulation: $e');
       return null;
+    }
+  }
+
+  /// Extracts the page count using pdfx, which is memory-efficient (streams from disk).
+  static Future<int> getPageCount(String path) async {
+    try {
+      final document = await pdfx.PdfDocument.openFile(path);
+      final count = document.pagesCount;
+      await document.close();
+      return count;
+    } catch (e) {
+      debugPrint('[AeroPDF] Failed to get page count: $e');
+      return 0;
     }
   }
 

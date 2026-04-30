@@ -141,6 +141,18 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       ..sort((a, b) => b.lastOpened!.compareTo(a.lastOpened!));
     final displayRecents = recentBooks.take(5).toList();
 
+    ref.listen<LibraryState>(libraryProvider, (previous, next) {
+      if (next.error != null && next.error != previous?.error) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(next.error!),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    });
+
     if (View.of(context).viewInsets.bottom == 0.0 && _searchFocusNode.hasFocus) {
       _searchFocusNode.unfocus();
     }
