@@ -50,12 +50,33 @@ Future<void> indexBookInBackground(
       for (int i = 0; i < totalPages; i++) {
         String pageText = '';
         try {
-          // Use TextLines and wordCollection to force space reconstruction
-          // This fixes the "squished words" issue for absolute-positioned PDFs
           final lines = extractor.extractTextLines(startPageIndex: i, endPageIndex: i);
           final buffer = StringBuffer();
+          
           for (final line in lines) {
-            buffer.writeln(line.wordCollection.map((w) => w.text).join(' '));
+            if (line.wordCollection.isEmpty) continue;
+            
+            final words = line.wordCollection;
+            buffer.write(words[0].text);
+            
+            for (int j = 1; j < words.length; j++) {
+              final prev = words[j - 1];
+              final curr = words[j];
+              
+              // If the distance between words is very small (< 2.0 pixels), 
+              // it's likely a fragmented word from kerning/layout quirks.
+              final distance = curr.bounds.left - (prev.bounds.left + prev.bounds.width);
+              
+              if (distance < 2.0 && distance > -5.0) {
+                // Join without space
+                buffer.write(curr.text);
+              } else {
+                // Actual space between words
+                buffer.write(' ');
+                buffer.write(curr.text);
+              }
+            }
+            buffer.writeln();
           }
           pageText = buffer.toString();
         } catch (e) {

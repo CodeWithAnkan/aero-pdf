@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../features/library/folder_screen.dart';
 import '../features/navigation/main_screen.dart';
@@ -29,17 +30,28 @@ final router = GoRouter(
     ),
     GoRoute(
       path: '/reader/:bookId',
-      builder: (context, state) {
-        // 1. Extract the Book ID from the path
+      // Custom instant transition — no slide animation competing with I/O.
+      // The reader fades in over 180ms, which feels intentional rather than
+      // abrupt, and gives the PDF viewer time to paint its first frame.
+      pageBuilder: (context, state) {
         final bookId = int.parse(state.pathParameters['bookId']!);
-
-        // 2. Extract the Page Number from the query string (?page=10)
         final pageStr = state.uri.queryParameters['page'];
         final initialPage = pageStr != null ? int.parse(pageStr) : 0;
 
-        return ReaderScreen(
-          bookId: bookId,
-          initialPage: initialPage, 
+        return CustomTransitionPage(
+          key: state.pageKey,
+          transitionDuration: const Duration(milliseconds: 180),
+          reverseTransitionDuration: const Duration(milliseconds: 150),
+          child: ReaderScreen(bookId: bookId, initialPage: initialPage),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(
+              opacity: CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeIn,
+              ),
+              child: child,
+            );
+          },
         );
       },
     ),

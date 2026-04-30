@@ -5,6 +5,7 @@ import '../models/annotation.dart';
 import '../models/book.dart';
 import '../models/ocr_cache.dart';
 import '../models/search_index.dart';
+import '../models/ai_summary.dart';
 
 /// Singleton wrapper around the Isar database.
 /// Call [IsarService.instance] to get the opened [Isar] handle.
@@ -27,6 +28,7 @@ class IsarService {
         AnnotationSchema,
         SearchIndexSchema,
         OcrCacheSchema,
+        AiSummarySchema,
       ],
       directory: dir.path,
       name: 'aeropdf',

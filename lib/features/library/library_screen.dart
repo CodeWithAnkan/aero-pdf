@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../core/models/book.dart';
 import 'library_provider.dart';
 import 'book_card.dart'; 
+import '../reader/reader_screen.dart' show warmUpPdfBytes;
 
 class LibraryScreen extends ConsumerStatefulWidget {
   const LibraryScreen({super.key});
@@ -300,6 +301,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     
     return GestureDetector(
       onTap: () async {
+        // Start loading bytes into cache before the route transition begins.
+        // _loadBook in ReaderScreen will find the cache warm and skip the
+        // file read, eliminating the stutter mid-transition.
+        warmUpPdfBytes(book.filePath);
         await context.push('/reader/${book.id}');
         ref.read(libraryProvider.notifier).loadBooks();
       },
@@ -382,6 +387,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   Widget _buildNotionListTile(Book book, ColorScheme cs) {
     return InkWell(
       onTap: () async {
+        warmUpPdfBytes(book.filePath);
         await context.push('/reader/${book.id}');
         ref.read(libraryProvider.notifier).loadBooks();
       },
