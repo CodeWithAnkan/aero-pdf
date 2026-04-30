@@ -18,7 +18,6 @@ import '../../core/models/book.dart';
 import '../../core/pdf/indexing_isolate.dart';
 import '../ai/ai_provider.dart';
 import '../ai/ai_engine.dart';
-import '../ai/model_manager.dart';
 import '../ocr/ocr_controller.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -839,7 +838,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
                   activeTrackColor: cs.onSurface,
                   inactiveTrackColor: cs.outlineVariant,
                   thumbColor: cs.onSurface,
-                  overlayColor: cs.onSurface.withValues(alpha: 0.1),
+                  overlayColor: cs.onSurface.withOpacity(0.1),
                   thumbShape: const RoundSliderThumbShape(
                       enabledThumbRadius: 6, elevation: 0),
                   overlayShape:
@@ -951,7 +950,6 @@ class _CachedInsightsPanel extends ConsumerStatefulWidget {
 }
 
 class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
-  final ScrollController _thinkingScrollController = ScrollController();
 
   @override
   void initState() {
@@ -963,7 +961,7 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
 
   @override
   void dispose() {
-    _thinkingScrollController.dispose();
+    ref.read(insightsProvider.notifier).cancelFullAnalysisOnly();
     super.dispose();
   }
 
@@ -1066,39 +1064,16 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
                   ],
                 ),
               ),
-              const SizedBox(height: 12),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _EngineChip(
-                        label: 'Nano', 
-                        type: AiEngineType.geminiNano,
-                        onTap: state.isProcessingGlobal ? null : () {
-                          ref.read(aiEngineSelectionProvider.notifier).state = AiEngineType.geminiNano;
-                        },
-                      ),
-                      const SizedBox(width: 8),
-                      _EngineChip(
-                        label: 'Pro SLM', 
-                        type: AiEngineType.slmPro,
-                        onTap: state.isProcessingGlobal ? null : () {
-                          ref.read(aiEngineSelectionProvider.notifier).state = AiEngineType.slmPro;
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const Divider(height: 32),
+              const SizedBox(height: 16),
+              if (state.isProcessingGlobal) ...[
+                _buildThinkingLog(state),
+                const Divider(height: 32),
+              ],
               Expanded(
                 child: ListView(
                   controller: scrollController,
                   padding: const EdgeInsets.symmetric(horizontal: 24),
                   children: [
-                    _buildDownloadSection(),
                     if (state.result.value == null && !state.isProcessingGlobal) ...[
                       const SizedBox(height: 40),
                       Icon(Icons.description_outlined, size: 48, color: cs.outlineVariant),
@@ -1118,20 +1093,33 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
                         ),
                       ),
                     ],
-                    if (state.thinkingSteps.isNotEmpty) ...[
-                      _buildThinkingLog(state),
-                    ],
-                    state.result.when(
-                      data: (result) {
-                        if (result == null) return const SizedBox.shrink();
-                        return _buildSummaryContent(result);
-                      },
-                      loading: () => const SizedBox.shrink(),
-                      error: (err, _) => Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Text('Error: $err', style: const TextStyle(color: Colors.red)),
+                    if (state.result.hasValue && state.result.value != null)
+                      Column(
+                        children: [
+                          _buildSummaryContent(state.result.value!),
+                          if (state.result.value!.mode != SummaryMode.global && !state.isProcessingGlobal) ...[
+                            const SizedBox(height: 32),
+                            OutlinedButton.icon(
+                              onPressed: _generateSummary,
+                              icon: const Icon(Icons.auto_awesome_rounded, size: 18),
+                              label: const Text('Complete Full Book Analysis'),
+                              style: OutlinedButton.styleFrom(
+                                minimumSize: const Size.fromHeight(50),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                            ),
+                          ],
+                        ],
+                      )
+                    else
+                      state.result.when(
+                        data: (_) => const SizedBox.shrink(),
+                        loading: () => const SizedBox.shrink(),
+                        error: (err, _) => Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text('Error: $err', style: const TextStyle(color: Colors.red)),
+                        ),
                       ),
-                    ),
                     const SizedBox(height: 40),
                   ],
                 ),
@@ -1144,62 +1132,30 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
   }
 
   Widget _buildThinkingLog(InsightsState state) {
+    if (!state.isProcessingGlobal) return const SizedBox.shrink();
     final cs = Theme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 24),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: cs.outlineVariant.withOpacity(0.5)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+      child: Row(
         children: [
-          Row(
-            children: [
-              if (state.isProcessingGlobal)
-                SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: cs.primary),
-                )
-              else
-                Icon(Icons.check_circle_outline_rounded, size: 16, color: cs.primary),
-              const SizedBox(width: 12),
-              Text(
-                state.isProcessingGlobal ? 'AI is thinking...' : 'Analysis Complete',
-                style: GoogleFonts.archivo(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: cs.primary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
           SizedBox(
-            height: 80,
-            child: ListView.builder(
-              controller: _thinkingScrollController,
-              itemCount: state.thinkingSteps.length,
-              itemBuilder: (context, index) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (_thinkingScrollController.hasClients) {
-                    _thinkingScrollController.jumpTo(_thinkingScrollController.position.maxScrollExtent);
-                  }
-                });
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(
-                    '> ${state.thinkingSteps[index]}',
-                    style: GoogleFonts.firaCode(
-                      fontSize: 10,
-                      color: cs.onSurfaceVariant,
-                    ),
-                  ),
-                );
-              },
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: cs.primary,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            state.progressLabel != null 
+                ? 'AI is thinking... (${state.progressLabel})'
+                : 'AI is thinking...',
+            style: GoogleFonts.archivo(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: cs.primary,
             ),
           ),
         ],
@@ -1258,61 +1214,6 @@ class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
           ),
         )),
       ],
-    );
-  }
-
-  Widget _buildDownloadSection() {
-    final modelState = ref.watch(modelManagerProvider);
-    final cs = Theme.of(context).colorScheme;
-    if (modelState.isDownloaded) return const SizedBox.shrink();
-    return Container(
-      margin: const EdgeInsets.only(bottom: 24),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: cs.primaryContainer.withOpacity(0.3),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: cs.primary.withOpacity(0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.auto_fix_high_rounded, size: 20, color: cs.primary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Upgrade to Pro AI for full book analysis',
-                  style: GoogleFonts.archivo(fontWeight: FontWeight.bold, fontSize: 14),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (modelState.isDownloading) ...[
-             LinearProgressIndicator(value: modelState.progress),
-             const SizedBox(height: 8),
-             Text('Downloading: ${(modelState.progress * 100).toStringAsFixed(1)}%', style: const TextStyle(fontSize: 10)),
-          ] else
-            FilledButton.icon(
-              onPressed: () => ref.read(modelManagerProvider.notifier).downloadModel(),
-              icon: const Icon(Icons.download_rounded, size: 18),
-              label: const Text('Download Gemma 2B (1.5GB)'),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _EngineChip({required String label, required AiEngineType type, VoidCallback? onTap}) {
-    final selection = ref.watch(aiEngineSelectionProvider);
-    final isSelected = selection == type;
-    return ChoiceChip(
-      label: Text(label, style: GoogleFonts.archivo(fontSize: 11, fontWeight: FontWeight.bold)),
-      selected: isSelected,
-      onSelected: onTap == null ? null : (val) {
-        if (val) onTap();
-      },
     );
   }
 }

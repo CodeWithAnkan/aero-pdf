@@ -9,11 +9,8 @@ import 'ai_engine.dart';
 // Engine provider — initialised once per app session
 // ─────────────────────────────────────────────────────────────────────────────
 
-final aiEngineSelectionProvider = StateProvider<AiEngineType>((ref) => AiEngineType.auto);
-
 final aiEngineProvider = FutureProvider.autoDispose<AiEngine>((ref) async {
-  final selection = ref.watch(aiEngineSelectionProvider);
-  return buildAiEngine(override: selection);
+  return buildAiEngine();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,12 +22,16 @@ class InsightsState {
   final List<String> thinkingSteps;
   final bool isProcessingGlobal;
   final bool hasFastSummary;
+  final double progress;
+  final String? progressLabel;
 
   const InsightsState({
     this.result = const AsyncValue.data(null),
     this.thinkingSteps = const [],
     this.isProcessingGlobal = false,
     this.hasFastSummary = false,
+    this.progress = 0.0,
+    this.progressLabel,
   });
 
   InsightsState copyWith({
@@ -38,12 +39,16 @@ class InsightsState {
     List<String>? thinkingSteps,
     bool? isProcessingGlobal,
     bool? hasFastSummary,
+    double? progress,
+    String? progressLabel,
   }) =>
       InsightsState(
         result: result ?? this.result,
         thinkingSteps: thinkingSteps ?? this.thinkingSteps,
         isProcessingGlobal: isProcessingGlobal ?? this.isProcessingGlobal,
         hasFastSummary: hasFastSummary ?? this.hasFastSummary,
+        progress: progress ?? this.progress,
+        progressLabel: progressLabel ?? this.progressLabel,
       );
 }
 
@@ -55,11 +60,19 @@ class InsightsNotifier extends StateNotifier<InsightsState> {
   InsightsNotifier() : super(const InsightsState());
 
   bool _isCancelled = false;
+  bool _isFullAnalysisCancelled = false;
   bool _isGenerating = false;
   
-  void cancel() {
+  void cancelAll() {
     _isCancelled = true;
+    _isFullAnalysisCancelled = true;
     _isGenerating = false;
+  }
+
+  void cancelFullAnalysisOnly() {
+    _isFullAnalysisCancelled = true;
+    _isGenerating = false;
+    state = state.copyWith(isProcessingGlobal: false);
   }
   
   Future<void> checkCache(int bookId) async {
@@ -115,6 +128,7 @@ class InsightsNotifier extends StateNotifier<InsightsState> {
       }
 
       _isCancelled = false;
+      _isFullAnalysisCancelled = false;
       state = state.copyWith(
         result: const AsyncValue.loading(),
         thinkingSteps: ['Booting AI Engine...', 'Checking hardware compatibility...'],
@@ -143,6 +157,11 @@ class InsightsNotifier extends StateNotifier<InsightsState> {
   }
 
   Future<void> _generateFastMix(int bookId, AiEngine engine, PageText currentPage, List<PageText> allPages, Isar isar) async {
+    if (state.hasFastSummary) {
+      _addStep('Using existing Quick Summary. Skipping Fast Mix stage...');
+      return;
+    }
+    
     _addStep('Stage 1: Generating Quick Summary (Intro + Current)...');
     
     // Quick Mix: Pages 1-10 + Current +/- 10
@@ -158,7 +177,7 @@ class InsightsNotifier extends StateNotifier<InsightsState> {
         allPages: allPages,
         onPartialResult: (chunk) => _updateLastStep(chunk),
       );
-      if (_isCancelled) return;
+      // No cancellation check here: allow Quick Summary to finish even if panel closed
 
       final summaryText = result.sentences.join('\n');
       
@@ -194,8 +213,19 @@ class InsightsNotifier extends StateNotifier<InsightsState> {
       decoded.forEach((k, v) => chunkSummaries[int.parse(k)] = v as String);
     }
     
+    int processedCount = 0;
+    final totalChunks = chunks.length;
+
     for (final entry in chunks.entries) {
-      if (_isCancelled) return;
+      processedCount++;
+      if (_isFullAnalysisCancelled || _isCancelled) return;
+      
+      final currentProgress = processedCount / totalChunks;
+      state = state.copyWith(
+        progress: currentProgress,
+        progressLabel: '$processedCount of $totalChunks',
+      );
+
       if (chunkSummaries.containsKey(entry.key)) {
         _addStep('Skipping cached Chunk ${entry.key} (Pages ${entry.key}-${entry.key + 49})...');
         continue;
@@ -219,13 +249,16 @@ class InsightsNotifier extends StateNotifier<InsightsState> {
           final update = (s ?? AiSummary())..bookId = bookId..chunkSummariesJson = jsonEncode(chunkSummaries.map((k, v) => MapEntry(k.toString(), v)))..lastUpdated = DateTime.now();
           await isar.collection<AiSummary>().put(update);
         });
+
+        // Mandatory cooldown to avoid ErrorCode 9 (Rate limiting)
+        await Future.delayed(const Duration(milliseconds: 1500));
       } catch (e) {
         _addStep('Failed chunk ${entry.key}: $e');
       }
     }
 
     // FINAL REDUCE
-    if (_isCancelled) return;
+    if (_isFullAnalysisCancelled || _isCancelled) return;
 
     // Shortcut: If we only have 1 chunk, that IS our global summary.
     if (chunkSummaries.length == 1) {
@@ -236,6 +269,8 @@ class InsightsNotifier extends StateNotifier<InsightsState> {
     }
 
     _addStep('Synthesizing Global Summary from ${chunkSummaries.length} parts...');
+    
+    await Future.delayed(const Duration(seconds: 1));
     
     try {
       _addStep('Waiting for AI response...');
@@ -265,6 +300,8 @@ class InsightsNotifier extends StateNotifier<InsightsState> {
           mode: SummaryMode.global,
         )),
         isProcessingGlobal: false,
+        progress: 0.0,
+        progressLabel: null,
       );
       _addStep('Global Summary complete!');
     } catch (e) {
@@ -305,6 +342,6 @@ class InsightsNotifier extends StateNotifier<InsightsState> {
 }
 
 final insightsProvider =
-    StateNotifierProvider.autoDispose<InsightsNotifier, InsightsState>(
+    StateNotifierProvider<InsightsNotifier, InsightsState>(
   (ref) => InsightsNotifier(),
 );
