@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import './saved_passwords_screen.dart';
 import '../../core/theme/theme_provider.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -194,6 +195,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           _buildSectionHeader('Storage', cs.onSurfaceVariant),
           _buildSectionGroup(cs.outlineVariant, cs.surface, [
             _buildInfoTile('Local Storage Used', _storageUsed, cs.onSurface, cs.onSurfaceVariant),
+            _buildNavTile(
+              'Saved Passwords',
+              cs.onSurface,
+              cs.onSurfaceVariant,
+              trailingText: 'Manage vault',
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SavedPasswordsScreen())),
+            ),
             _buildDivider(cs.outlineVariant),
             _isClearingCache 
                 ? _buildInfoTile('Clearing...', '', cs.onSurfaceVariant, cs.onSurfaceVariant)
@@ -203,7 +211,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // ── About ───────────────────────────────────────────────────────
           _buildSectionHeader('About', cs.onSurfaceVariant),
           _buildSectionGroup(cs.outlineVariant, cs.surface, [
-            _buildInfoTile('Version', '1.0.0', cs.onSurface, cs.onSurfaceVariant),
+            _buildInfoTile('Version', '1.2.0', cs.onSurface, cs.onSurfaceVariant),
             _buildDivider(cs.outlineVariant),
             _buildNavTile('Privacy Policy', cs.onSurface, cs.onSurfaceVariant, onTap: () {
               Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PrivacyPolicyScreen()));

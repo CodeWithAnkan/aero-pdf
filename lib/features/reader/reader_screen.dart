@@ -19,6 +19,7 @@ import '../../core/pdf/indexing_isolate.dart';
 import '../ai/ai_provider.dart';
 import '../ai/ai_engine.dart';
 import '../ocr/ocr_controller.dart';
+import '../../core/security/security_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Global caches
@@ -63,6 +64,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   bool _showUi = true;
   bool _hasSelection = false;
   bool _isViewerReady = false; // true once onDocumentLoaded fires
+  String? _currentPassword; // stores password if document is encrypted
+  String? _viewerPassword; // password passed to SfPdfViewer
 
   static const _barAnimDuration = Duration(milliseconds: 220);
 
@@ -213,10 +216,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         _isLoading = false;
       });
 
-      if (!book.isIndexed) {
-        final isarDir = await IsarService.directoryPath;
-        indexBookInBackground(book.id, book.filePath, isarDir);
-      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -383,6 +382,195 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     );
   }
 
+  Future<String?> _showPasswordDialog() async {
+    final controller = TextEditingController();
+    final cs = Theme.of(context).colorScheme;
+    bool showPassword = false;
+    final String fileName = _book?.fileName ?? 'document.pdf';
+    
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+            surfaceTintColor: Colors.transparent,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+            contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: cs.primary.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.lock_outline_rounded, color: cs.primary, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Password Protected',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.archivo(
+                          fontWeight: FontWeight.w700, 
+                          fontSize: 17,
+                          color: cs.onSurface,
+                        ),
+                      ),
+                      Text(
+                        'Requires password to open',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(
+                          fontSize: 12, 
+                          color: cs.onSurface.withOpacity(0.6),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 4),
+                // File Info Badge
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: cs.surfaceContainerHighest.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: cs.outlineVariant.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.description_outlined, size: 16, color: cs.onSurface.withOpacity(0.7)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          fileName,
+                          style: GoogleFonts.inter(
+                            fontSize: 12, 
+                            fontWeight: FontWeight.w500,
+                            color: cs.onSurface.withOpacity(0.9),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Password',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: cs.onSurface.withOpacity(0.8),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: controller,
+                  obscureText: !showPassword,
+                  autofocus: true,
+                  style: GoogleFonts.inter(color: cs.onSurface, fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: 'Enter password',
+                    hintStyle: GoogleFonts.inter(color: cs.onSurface.withOpacity(0.3), fontSize: 14),
+                    filled: true,
+                    fillColor: cs.surfaceContainerHighest.withOpacity(0.1),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        showPassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                        size: 18,
+                        color: cs.onSurface.withOpacity(0.5),
+                      ),
+                      onPressed: () => setState(() => showPassword = !showPassword),
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: cs.outlineVariant.withOpacity(0.5)),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: cs.outlineVariant.withOpacity(0.5)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: cs.primary, width: 1.5),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  ),
+                  onSubmitted: (v) => Navigator.pop(context, v),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+            actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
+            actions: [
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        side: BorderSide(color: cs.outlineVariant),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      child: Text(
+                        'Cancel', 
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: cs.onSurface.withOpacity(0.7),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context, controller.text),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: cs.primary,
+                        foregroundColor: cs.onPrimary,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.lock_open_rounded, size: 16),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Open File', 
+                            style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _setSystemUi(true);
@@ -494,7 +682,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       setState(() => _hasSelection = d.selectedText != null);
     }
 
-    void onDocLoaded(PdfDocumentLoadedDetails d) {
+    void onDocLoaded(PdfDocumentLoadedDetails d) async {
       setState(() {
         _totalPages = _pdfController.pageCount;
         _isViewerReady = true; // lifts the splash cover
@@ -503,6 +691,36 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         _scrollProgress.value = _currentPage / (_totalPages - 1);
       }
       if (_pdfController.pageCount == 1) _saveProgress();
+
+      // Trigger indexing here to ensure we have the password if needed
+      final book = _book;
+      if (book != null) {
+        // If it was imported as locked, we now have the true page count. Update Isar.
+        if (book.totalPages == 0 || book.isPasswordProtected) {
+          final isar = await IsarService.instance;
+          await isar.writeTxn(() async {
+            book.totalPages = _totalPages;
+            book.isPasswordProtected = true; // Ensure flag is correct
+            await isar.books.put(book);
+          });
+        }
+
+        // Save password to secure storage if we have it
+        if (_currentPassword != null) {
+          SecurityService.savePassword(book.id, _currentPassword!);
+        }
+
+        if (!book.isIndexed) {
+          IsarService.directoryPath.then((isarDir) {
+            indexBookInBackground(
+              book.id,
+              book.filePath,
+              isarDir,
+              password: _currentPassword,
+            );
+          });
+        }
+      }
     }
 
     void onPageChanged(PdfPageChangedDetails d) {
@@ -513,6 +731,35 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       }
       _scheduleOcrCheck(newIdx);
       _saveProgress();
+    }
+
+    void onDocLoadFailed(PdfDocumentLoadFailedDetails d) async {
+      debugPrint('[AeroPDF] PDF Load Failed: ${d.error}');
+      
+      // Broad check for password/encryption related failures
+      final isPasswordError = d.error.toLowerCase().contains('password') || 
+                              d.error.toLowerCase().contains('encrypt') ||
+                              d.error.toLowerCase().contains('protect');
+
+      if (isPasswordError) {
+        // Small delay to ensure the viewer has finished its internal cleanup
+        await Future.delayed(const Duration(milliseconds: 200));
+        
+        if (!mounted) return;
+        final pwd = await _showPasswordDialog();
+        if (pwd != null) {
+          setState(() {
+            _viewerPassword = pwd;
+            _currentPassword = pwd;
+            _error = null;
+          });
+        } else {
+          // User canceled password prompt -> Exit reader and go back to library
+          if (mounted) context.pop();
+        }
+      } else {
+        setState(() => _error = d.error);
+      }
     }
 
     final scrollDir = _layoutMode == PdfPageLayoutMode.single
@@ -538,9 +785,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
             pageLayoutMode: _layoutMode,
             scrollDirection: scrollDir,
             pageSpacing: 4,
+            password: _viewerPassword,
+            canShowPasswordDialog: false,
             onTextSelectionChanged: onTextSel,
             onDocumentLoaded: onDocLoaded,
             onPageChanged: onPageChanged,
+            onDocumentLoadFailed: onDocLoadFailed,
           )
         // ── Large-file fallback: stream from disk ─────────────────────────
         : SfPdfViewer.file(
@@ -560,9 +810,12 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
             pageLayoutMode: _layoutMode,
             scrollDirection: scrollDir,
             pageSpacing: 4,
+            password: _viewerPassword,
+            canShowPasswordDialog: false,
             onTextSelectionChanged: onTextSel,
             onDocumentLoaded: onDocLoaded,
             onPageChanged: onPageChanged,
+            onDocumentLoadFailed: onDocLoadFailed,
           );
 
     return SfPdfViewerTheme(

@@ -137,12 +137,17 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
       final savedFile = await file.copy(permanentPath); 
 
       // Get page count efficiently without loading full bytes
-      final totalPages = await PdfService.getPageCount(savedFile.path);
+      int totalPages = await PdfService.getPageCount(savedFile.path);
+      bool isProtected = totalPages == -1;
+      
       if (totalPages == 0) {
         state = state.copyWith(
             isLoading: false, error: 'File is corrupted or cannot be opened.');
         return null;
       }
+
+      // If protected, we can't get count yet. Default to 0 and update on first open.
+      if (isProtected) totalPages = 0;
 
       final title = PdfService.extractTitle(fileName);
       
@@ -154,6 +159,7 @@ class LibraryNotifier extends StateNotifier<LibraryState> {
         ..fileName = fileName
         ..totalPages = totalPages
         ..isIndexed = false
+        ..isPasswordProtected = isProtected
         ..addedAt = DateTime.now()
         ..lastOpened = DateTime.now();
 

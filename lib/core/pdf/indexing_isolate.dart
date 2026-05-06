@@ -26,6 +26,7 @@ Future<void> indexBookInBackground(
   int bookId,
   String filePath,
   String isarDirectory, {
+  String? password,
   SendPort? sendPort,
 }) async {
   await Isolate.run(() async {
@@ -40,7 +41,7 @@ Future<void> indexBookInBackground(
       if (!await file.exists()) return;
 
       final bytes = await file.readAsBytes();
-      final pdfDoc = PdfDocument(inputBytes: bytes);
+      final pdfDoc = PdfDocument(inputBytes: bytes, password: password);
       final extractor = PdfTextExtractor(pdfDoc);
       final totalPages = pdfDoc.pages.count;
       

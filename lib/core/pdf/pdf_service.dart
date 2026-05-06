@@ -39,6 +39,27 @@ class PdfService {
       await document.close();
       return count;
     } catch (e) {
+      final errorStr = e.toString().toLowerCase();
+      
+      // If pdfx says it's a password/encrypt error, we're done.
+      if (errorStr.contains('password') || errorStr.contains('encrypt') || errorStr.contains('protect')) {
+        return -1;
+      }
+
+      // If it's an "Unknown error" or similar, try Syncfusion as a second opinion.
+      // Syncfusion sometimes gives more detailed error strings for encryption.
+      try {
+        final bytes = await File(path).readAsBytes();
+        sf.PdfDocument(inputBytes: bytes);
+        // If this succeeded, it means it's NOT password protected (otherwise it would throw).
+        // But pdfx failed for some other reason? Unlikely, but let's be safe.
+      } catch (sfError) {
+        final sfErrStr = sfError.toString().toLowerCase();
+        if (sfErrStr.contains('password') || sfErrStr.contains('encrypt') || sfErrStr.contains('protect')) {
+          return -1;
+        }
+      }
+
       debugPrint('[AeroPDF] Failed to get page count: $e');
       return 0;
     }

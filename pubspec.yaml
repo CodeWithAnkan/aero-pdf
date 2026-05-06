@@ -1,7 +1,7 @@
 name: aeropdf
 description: Lightweight offline-first 120fps PDF reader with on-device AI.
 publish_to: 'none'
-version: 1.1.0+2
+version: 1.2.0+3
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -52,6 +52,8 @@ dependencies:
   dio: ^5.4.3+1
   mediapipe_core: ^0.0.1-dev.3
   mediapipe_genai: ^0.0.1-dev.2
+  local_auth: ^3.0.1
+  flutter_secure_storage: ^10.0.0
 
 flutter:
   uses-material-design: true
