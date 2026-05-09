@@ -762,6 +762,18 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       }
     }
 
+    void onPdfTap(PdfGestureDetails details) {
+      if (_hasSelection) {
+        _pdfController.clearSelection();
+      } else {
+        _setShowUi(!_showUi);
+      }
+    }
+
+    void onLinkClick(PdfHyperlinkClickedDetails details) {
+      HapticFeedback.selectionClick();
+    }
+
     final scrollDir = _layoutMode == PdfPageLayoutMode.single
         ? PdfScrollDirection.horizontal
         : PdfScrollDirection.vertical;
@@ -791,6 +803,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
             onDocumentLoaded: onDocLoaded,
             onPageChanged: onPageChanged,
             onDocumentLoadFailed: onDocLoadFailed,
+            onTap: onPdfTap,
+            onHyperlinkClicked: onLinkClick,
           )
         // ── Large-file fallback: stream from disk ─────────────────────────
         : SfPdfViewer.file(
@@ -816,6 +830,8 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
             onDocumentLoaded: onDocLoaded,
             onPageChanged: onPageChanged,
             onDocumentLoadFailed: onDocLoadFailed,
+            onTap: onPdfTap,
+            onHyperlinkClicked: onLinkClick,
           );
 
     return SfPdfViewerTheme(
@@ -836,9 +852,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
   }
 
   Widget _buildReaderLayout(ColorScheme cs, Color bgLight) {
-    final topBarHeight = MediaQuery.of(context).padding.top + 64.0;
-    final bottomBarHeight = MediaQuery.of(context).padding.bottom + 80.0;
-
     return SizedBox.expand(
       child: Stack(
         children: [
@@ -850,24 +863,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
             ),
           ),
 
-          // ── Transparent tap overlay ────────────────────────────────────
-          Positioned(
-            top: topBarHeight + 60,
-            bottom: bottomBarHeight + 60,
-            left: 0,
-            right: 0,
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: () {
-                if (_hasSelection) {
-                  _pdfController.clearSelection();
-                } else {
-                  _setShowUi(!_showUi);
-                }
-                HapticFeedback.selectionClick();
-              },
-            ),
-          ),
+
 
           // ── Top bar ────────────────────────────────────────────────────
           AnimatedPositioned(

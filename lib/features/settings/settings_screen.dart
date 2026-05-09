@@ -211,7 +211,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           // ── About ───────────────────────────────────────────────────────
           _buildSectionHeader('About', cs.onSurfaceVariant),
           _buildSectionGroup(cs.outlineVariant, cs.surface, [
-            _buildInfoTile('Version', '1.2.0', cs.onSurface, cs.onSurfaceVariant),
+            _buildInfoTile('Version', '1.2.1', cs.onSurface, cs.onSurfaceVariant),
             _buildDivider(cs.outlineVariant),
             _buildNavTile('Privacy Policy', cs.onSurface, cs.onSurfaceVariant, onTap: () {
               Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PrivacyPolicyScreen()));
