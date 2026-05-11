@@ -8,7 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../core/models/book.dart';
 import 'library_provider.dart';
 import 'book_card.dart'; 
-import '../reader/reader_screen.dart' show warmUpPdfBytes;
+import '../reader/utils/pdf_cache.dart';
 
 class LibraryScreen extends ConsumerStatefulWidget {
   const LibraryScreen({super.key});

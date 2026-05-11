@@ -1,12 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:aeropdf/core/models/search_index.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:isar/isar.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:syncfusion_flutter_core/theme.dart';
@@ -16,30 +14,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/db/isar_service.dart';
 import '../../core/models/book.dart';
 import '../../core/pdf/indexing_isolate.dart';
-import '../ai/ai_provider.dart';
-import '../ai/ai_engine.dart';
 import '../ocr/ocr_controller.dart';
+import '../../core/models/search_index.dart';
 import '../../core/security/security_service.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Global caches
-// ─────────────────────────────────────────────────────────────────────────────
-
-final Map<String, Uint8List> _pdfBytesCache = {};
-
-/// Called by LibraryScreen on tap — before the route transition starts.
-/// Reads the file on a separate isolate via [compute] so it never competes
-/// with the main thread during the fade transition animation.
-void warmUpPdfBytes(String filePath) {
-  if (_pdfBytesCache.containsKey(filePath)) return; // already warm
-  // ignore: unawaited_futures
-  compute(_readFileBytes, filePath).then((bytes) {
-    _pdfBytesCache[filePath] = bytes;
-  }).ignore(); // silently discard errors; _loadBook will fall back to .file
-}
-
-// Top-level function required by compute() — must not be a closure or method.
-Future<Uint8List> _readFileBytes(String path) => File(path).readAsBytes();
+import 'utils/pdf_cache.dart';
+import 'widgets/reader_loading_screen.dart';
+import 'widgets/reader_app_bar.dart';
+import 'widgets/reader_bottom_bar.dart';
+import 'widgets/reader_search_bar.dart';
+import 'widgets/insights_panel.dart';
+import 'widgets/ocr_indicator.dart';
+import 'widgets/password_dialog.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reader Screen
@@ -186,13 +172,13 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       Uint8List? bytes;
       final fileSize = await File(book.filePath).length();
       if (fileSize < memoryThreshold) {
-        if (_pdfBytesCache.containsKey(book.filePath)) {
-          bytes = _pdfBytesCache[book.filePath]!;
+        if (pdfBytesCache.containsKey(book.filePath)) {
+          bytes = pdfBytesCache[book.filePath]!;
         } else {
           // Read on a separate isolate — keeps the main thread free so the
           // fade-in transition animation runs at full 60fps while bytes load.
-          final loaded = await compute(_readFileBytes, book.filePath);
-          _pdfBytesCache[book.filePath] = loaded;
+          final loaded = await compute(readFileBytes, book.filePath);
+          pdfBytesCache[book.filePath] = loaded;
           bytes = loaded;
         }
       }
@@ -374,7 +360,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _CachedInsightsPanel(
+      builder: (_) => InsightsPanel(
         bookId: book.id,
         filePath: book.filePath,
         currentPage: _pdfController.pageNumber,
@@ -382,194 +368,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     );
   }
 
-  Future<String?> _showPasswordDialog() async {
-    final controller = TextEditingController();
-    final cs = Theme.of(context).colorScheme;
-    bool showPassword = false;
-    final String fileName = _book?.fileName ?? 'document.pdf';
-    
-    return showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) {
-          return AlertDialog(
-            backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-            surfaceTintColor: Colors.transparent,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-            contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-            title: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: cs.primary.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(Icons.lock_outline_rounded, color: cs.primary, size: 20),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Password Protected',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.archivo(
-                          fontWeight: FontWeight.w700, 
-                          fontSize: 17,
-                          color: cs.onSurface,
-                        ),
-                      ),
-                      Text(
-                        'Requires password to open',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.inter(
-                          fontSize: 12, 
-                          color: cs.onSurface.withOpacity(0.6),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 4),
-                // File Info Badge
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: cs.surfaceContainerHighest.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: cs.outlineVariant.withOpacity(0.3)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.description_outlined, size: 16, color: cs.onSurface.withOpacity(0.7)),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          fileName,
-                          style: GoogleFonts.inter(
-                            fontSize: 12, 
-                            fontWeight: FontWeight.w500,
-                            color: cs.onSurface.withOpacity(0.9),
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Password',
-                  style: GoogleFonts.inter(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: cs.onSurface.withOpacity(0.8),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: controller,
-                  obscureText: !showPassword,
-                  autofocus: true,
-                  style: GoogleFonts.inter(color: cs.onSurface, fontSize: 14),
-                  decoration: InputDecoration(
-                    hintText: 'Enter password',
-                    hintStyle: GoogleFonts.inter(color: cs.onSurface.withOpacity(0.3), fontSize: 14),
-                    filled: true,
-                    fillColor: cs.surfaceContainerHighest.withOpacity(0.1),
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        showPassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-                        size: 18,
-                        color: cs.onSurface.withOpacity(0.5),
-                      ),
-                      onPressed: () => setState(() => showPassword = !showPassword),
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: cs.outlineVariant.withOpacity(0.5)),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: cs.outlineVariant.withOpacity(0.5)),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide(color: cs.primary, width: 1.5),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  ),
-                  onSubmitted: (v) => Navigator.pop(context, v),
-                ),
-                const SizedBox(height: 8),
-              ],
-            ),
-            actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
-            actions: [
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        side: BorderSide(color: cs.outlineVariant),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      child: Text(
-                        'Cancel', 
-                        style: GoogleFonts.inter(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: cs.onSurface.withOpacity(0.7),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () => Navigator.pop(context, controller.text),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: cs.primary,
-                        foregroundColor: cs.onPrimary,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.lock_open_rounded, size: 16),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Open File', 
-                            style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
 
   @override
   void dispose() {
@@ -588,37 +386,6 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
 
   // ── Loading screen ───────────────────────────────────────────────────────
 
-  Widget _buildLoadingScreen(ColorScheme cs, Color bgLight) {
-    return Container(
-      key: const ValueKey('loading'),
-      color: bgLight,
-      child: SafeArea(
-        child: Column(
-          children: [
-            // ── Thin progress bar at the very top ─────────────────────────
-            AnimatedBuilder(
-              animation: _loadProgressAnim,
-              builder: (context, _) {
-                return LinearProgressIndicator(
-                  value: _loadProgressAnim.value,
-                  minHeight: 3,
-                  backgroundColor: Colors.transparent,
-                  valueColor: AlwaysStoppedAnimation<Color>(cs.primary),
-                );
-              },
-            ),
-            const Spacer(),
-            Icon(
-              Icons.picture_as_pdf_rounded,
-              size: 48,
-              color: cs.onSurface.withOpacity(0.15),
-            ),
-            const Spacer(),
-          ],
-        ),
-      ),
-    );
-  }
 
   // ── Build ─────────────────────────────────────────────────────────────────
 
@@ -632,7 +399,11 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       body: AnimatedSwitcher(
         duration: const Duration(milliseconds: 400),
         child: _isLoading
-            ? _buildLoadingScreen(cs, bgLight)
+            ? ReaderLoadingScreen(
+                loadProgressAnim: _loadProgressAnim,
+                cs: cs,
+                bgLight: bgLight,
+              )
             : _error != null || _book == null
                 ? Center(
                     key: const ValueKey('error'),
@@ -746,7 +517,7 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
         await Future.delayed(const Duration(milliseconds: 200));
         
         if (!mounted) return;
-        final pwd = await _showPasswordDialog();
+        final pwd = await showPasswordDialog(context, fileName: _book?.fileName ?? 'document.pdf');
         if (pwd != null) {
           setState(() {
             _viewerPassword = pwd;
@@ -872,9 +643,14 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
             top: _showUi ? 0 : -300,
             left: 0,
             right: 0,
-            child: Container(
-              color: bgLight,
-              child: SafeArea(bottom: false, child: _buildTopBar(cs, bgLight)),
+            child: ReaderAppBar(
+              title: _book!.title,
+              cs: cs,
+              bgLight: bgLight,
+              undoController: _undoController,
+              onSaveAnnotations: _saveAnnotations,
+              onStartSearch: _startSearch,
+              onOpenInsights: _openInsightsPanel,
             ),
           ),
 
@@ -885,13 +661,17 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
             bottom: _showUi ? 0 : -300,
             left: 0,
             right: 0,
-            child: Container(
-              color: bgLight,
-              child: SafeArea(top: false, child: _buildBottomBar(cs, bgLight)),
+            child: ReaderBottomBar(
+              cs: cs,
+              bgLight: bgLight,
+              scrollProgress: _scrollProgress,
+              totalPages: _totalPages,
+              onScrub: _onScrub,
+              onScrubEnd: _onScrubEnd,
             ),
           ),
 
-          _buildOcrIndicator(cs),
+          const OcrIndicator(),
 
           // ── Splash cover — fades out once the viewer signals ready ───────
           // The viewer renders underneath from the first frame, so by the time
@@ -910,250 +690,15 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
     );
   }
 
-  Widget _buildOcrIndicator(ColorScheme cs) {
-    return Consumer(
-      builder: (context, ref, _) {
-        final ocrState = ref.watch(ocrControllerProvider);
-        return ocrState.maybeWhen(
-          loading: () => Positioned(
-            top: 80,
-            right: 20,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.black87,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 12,
-                    height: 12,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white),
-                  ),
-                  SizedBox(width: 8),
-                  Text(
-                    'OCR ACTIVE',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.5),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          orElse: () => const SizedBox.shrink(),
-        );
-      },
-    );
-  }
-
-  Widget _buildTopBar(ColorScheme cs, Color bgLight) {
-    return Container(
-      height: 64,
-      decoration: BoxDecoration(
-        color: bgLight,
-        border: Border(bottom: BorderSide(color: cs.outlineVariant, width: 1)),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Row(
-        children: [
-          IconButton(
-              icon: Icon(Icons.arrow_back_rounded, color: cs.onSurface),
-              onPressed: () => context.pop()),
-          Expanded(
-            child: Text(
-              _book!.title,
-              style: GoogleFonts.archivo(
-                  color: cs.onSurface,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: -0.2),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-            ),
-          ),
-          ValueListenableBuilder<UndoHistoryValue>(
-            valueListenable: _undoController,
-            builder: (context, undoValue, _) {
-              final hasEdits = undoValue.canUndo;
-              return Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (hasEdits) ...[
-                    IconButton(
-                      icon: Icon(Icons.undo_rounded,
-                          color: undoValue.canUndo
-                              ? cs.onSurface
-                              : cs.onSurfaceVariant.withOpacity(0.4),
-                          size: 20),
-                      onPressed: undoValue.canUndo
-                          ? () => _undoController.undo()
-                          : null,
-                    ),
-                    IconButton(
-                      icon: Icon(Icons.save_rounded,
-                          color: cs.onSurface, size: 20),
-                      onPressed: _saveAnnotations,
-                    ),
-                  ],
-                ],
-              );
-            },
-          ),
-          PopupMenuButton<int>(
-            icon: Icon(Icons.more_vert_rounded, color: cs.onSurface),
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                value: 1,
-                child: Row(
-                  children: [
-                    Icon(Icons.search_rounded, color: cs.onSurface),
-                    const SizedBox(width: 12),
-                    const Text('Search Document'),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: 2,
-                child: Row(
-                  children: [
-                    Icon(Icons.auto_awesome_rounded, color: cs.onSurface),
-                    const SizedBox(width: 12),
-                    const Text('AI Insights'),
-                  ],
-                ),
-              ),
-            ],
-            onSelected: (value) {
-              if (value == 1) {
-                _startSearch();
-              } else if (value == 2) {
-                _openInsightsPanel();
-              }
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBottomBar(ColorScheme cs, Color bgLight) {
-    return Container(
-      decoration: BoxDecoration(
-        color: bgLight,
-        border: Border(top: BorderSide(color: cs.outlineVariant, width: 1)),
-      ),
-      padding: EdgeInsets.only(
-          left: 24,
-          right: 24,
-          top: 16,
-          bottom: 16 + MediaQuery.of(context).padding.bottom),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ValueListenableBuilder<double>(
-            valueListenable: _scrollProgress,
-            builder: (context, progress, _) {
-              final displayPage = (progress * (_totalPages - 1)).round() + 1;
-              final percent = (progress * 100).toInt();
-              final style = GoogleFonts.archivo(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: cs.onSurfaceVariant,
-                  letterSpacing: 1.2);
-              return Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text('PG. $displayPage', style: style),
-                  Text('$percent%', style: style.copyWith(color: cs.onSurface)),
-                  Text('$_totalPages PAGES', style: style),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 12),
-          ValueListenableBuilder<double>(
-            valueListenable: _scrollProgress,
-            builder: (context, progress, child) {
-              return SliderTheme(
-                data: SliderThemeData(
-                  trackHeight: 2,
-                  activeTrackColor: cs.onSurface,
-                  inactiveTrackColor: cs.outlineVariant,
-                  thumbColor: cs.onSurface,
-                  overlayColor: cs.onSurface.withOpacity(0.1),
-                  thumbShape: const RoundSliderThumbShape(
-                      enabledThumbRadius: 6, elevation: 0),
-                  overlayShape:
-                      const RoundSliderOverlayShape(overlayRadius: 16),
-                  trackShape: const RectangularSliderTrackShape(),
-                ),
-                child: Slider(
-                    value: progress.clamp(0.0, 1.0),
-                    onChanged: _onScrub,
-                    onChangeEnd: _onScrubEnd),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildSearchBar(BuildContext context, ColorScheme cs, Color bgLight) {
-    final result = _searchResult;
-    final hasResults = result != null && result.totalInstanceCount > 0;
-
-    return Container(
-      decoration: BoxDecoration(
-          color: bgLight,
-          border:
-              Border(bottom: BorderSide(color: cs.outlineVariant, width: 1))),
-      height: 64,
-      child: Row(
-        children: [
-          IconButton(
-              icon: Icon(Icons.arrow_back_rounded, color: cs.onSurface),
-              onPressed: _closeSearch),
-          Expanded(
-            child: TextField(
-              controller: _searchController,
-              focusNode: _searchFocusNode,
-              autofocus: true,
-              style: GoogleFonts.archivo(color: cs.onSurface, fontSize: 16),
-              decoration: InputDecoration(
-                hintText: 'Search...',
-                hintStyle: GoogleFonts.archivo(color: cs.onSurfaceVariant),
-                border: InputBorder.none,
-                contentPadding: const EdgeInsets.symmetric(vertical: 14),
-                suffixText: hasResults
-                    ? '${result.currentInstanceIndex} / ${result.totalInstanceCount}'
-                    : null,
-                suffixStyle: GoogleFonts.archivo(
-                    fontSize: 13, color: cs.onSurfaceVariant),
-              ),
-              onChanged: _onSearchChanged,
-              textInputAction: TextInputAction.search,
-            ),
-          ),
-          if (hasResults) ...[
-            IconButton(
-                icon:
-                    Icon(Icons.keyboard_arrow_up_rounded, color: cs.onSurface),
-                onPressed: () => result.previousInstance()),
-            IconButton(
-                icon: Icon(Icons.keyboard_arrow_down_rounded,
-                    color: cs.onSurface),
-                onPressed: () => result.nextInstance()),
-          ],
-        ],
-      ),
+    return ReaderSearchBar(
+      cs: cs,
+      bgLight: bgLight,
+      searchController: _searchController,
+      searchFocusNode: _searchFocusNode,
+      searchResult: _searchResult,
+      onCloseSearch: _closeSearch,
+      onSearchChanged: _onSearchChanged,
     );
   }
 
@@ -1177,292 +722,4 @@ class _ReaderScreenState extends ConsumerState<ReaderScreen>
       debugPrint("Save error: $e");
     }
   }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Cached AI Insights Panel
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _CachedInsightsPanel extends ConsumerStatefulWidget {
-  final int bookId;
-  final String filePath;
-  final int currentPage;
-
-  const _CachedInsightsPanel({
-    required this.bookId,
-    required this.filePath,
-    required this.currentPage,
-  });
-
-  @override
-  ConsumerState<_CachedInsightsPanel> createState() => _CachedInsightsPanelState();
-}
-
-class _CachedInsightsPanelState extends ConsumerState<_CachedInsightsPanel> {
-
-  @override
-  void initState() {
-    super.initState();
-    Future.microtask(() {
-      ref.read(insightsProvider.notifier).checkCache(widget.bookId);
-    });
-  }
-
-  @override
-  void dispose() {
-    ref.read(insightsProvider.notifier).cancelFullAnalysisOnly();
-    super.dispose();
-  }
-
-  Future<void> _generateSummary() async {
-    final notifier = ref.read(insightsProvider.notifier);
-    final engine = await ref.read(aiEngineProvider.future);
-    final isar = await IsarService.instance;
-
-    // 1. Get Text for analysis
-    final indexEntries = await isar.searchIndexs
-        .filter()
-        .bookIdEqualTo(widget.bookId)
-        .sortByPageNumber()
-        .findAll();
-
-    if (indexEntries.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Document not yet indexed. Please wait a few seconds.')),
-      );
-      return;
     }
-
-    final allPages = indexEntries
-        .map((e) => PageText(pageNumber: e.pageNumber, text: e.pageText))
-        .toList();
-
-    final currentPageText = allPages.firstWhere(
-      (p) => p.pageNumber == widget.currentPage,
-      orElse: () => allPages.first,
-    );
-
-    await notifier.generate(
-      bookId: widget.bookId,
-      engine: engine,
-      currentPage: currentPageText,
-      allPages: allPages,
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final state = ref.watch(insightsProvider);
-    final cs = Theme.of(context).colorScheme;
-
-    return DraggableScrollableSheet(
-      initialChildSize: 0.6,
-      minChildSize: 0.3,
-      maxChildSize: 0.9,
-      expand: false,
-      builder: (context, scrollController) {
-        return Container(
-          decoration: BoxDecoration(
-            color: cs.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.1),
-                blurRadius: 10,
-                offset: const Offset(0, -5),
-              ),
-            ],
-          ),
-          child: Column(
-            children: [
-              Center(
-                child: Container(
-                  margin: const EdgeInsets.symmetric(vertical: 12),
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: cs.outlineVariant,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Row(
-                  children: [
-                    Icon(Icons.auto_awesome_rounded, size: 22, color: cs.primary),
-                    const SizedBox(width: 12),
-                    Text(
-                      'AI Insights',
-                      style: GoogleFonts.archivo(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: cs.onSurface,
-                      ),
-                    ),
-                    const Spacer(),
-                    if (state.result.hasValue && state.result.value != null)
-                      IconButton(
-                        icon: const Icon(Icons.refresh_rounded),
-                        onPressed: state.isProcessingGlobal ? null : () async {
-                          final isar = await IsarService.instance;
-                          ref.read(insightsProvider.notifier).clear(isar, widget.bookId);
-                        },
-                        tooltip: 'Regenerate Summary',
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              if (state.isProcessingGlobal) ...[
-                _buildThinkingLog(state),
-                const Divider(height: 32),
-              ],
-              Expanded(
-                child: ListView(
-                  controller: scrollController,
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  children: [
-                    if (state.result.value == null && !state.isProcessingGlobal) ...[
-                      const SizedBox(height: 40),
-                      Icon(Icons.description_outlined, size: 48, color: cs.outlineVariant),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Generate deep insights for this document.',
-                        textAlign: TextAlign.center,
-                        style: GoogleFonts.archivo(color: cs.onSurfaceVariant),
-                      ),
-                      const SizedBox(height: 32),
-                      FilledButton.icon(
-                        onPressed: state.isProcessingGlobal ? null : _generateSummary,
-                        icon: const Icon(Icons.bolt_rounded),
-                        label: const Text('Analyze Full Book'),
-                        style: FilledButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                        ),
-                      ),
-                    ],
-                    if (state.result.hasValue && state.result.value != null)
-                      Column(
-                        children: [
-                          _buildSummaryContent(state.result.value!),
-                          if (state.result.value!.mode != SummaryMode.global && !state.isProcessingGlobal) ...[
-                            const SizedBox(height: 32),
-                            OutlinedButton.icon(
-                              onPressed: _generateSummary,
-                              icon: const Icon(Icons.auto_awesome_rounded, size: 18),
-                              label: const Text('Complete Full Book Analysis'),
-                              style: OutlinedButton.styleFrom(
-                                minimumSize: const Size.fromHeight(50),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                              ),
-                            ),
-                          ],
-                        ],
-                      )
-                    else
-                      state.result.when(
-                        data: (_) => const SizedBox.shrink(),
-                        loading: () => const SizedBox.shrink(),
-                        error: (err, _) => Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text('Error: $err', style: const TextStyle(color: Colors.red)),
-                        ),
-                      ),
-                    const SizedBox(height: 40),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildThinkingLog(InsightsState state) {
-    if (!state.isProcessingGlobal) return const SizedBox.shrink();
-    final cs = Theme.of(context).colorScheme;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 16,
-            height: 16,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: cs.primary,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            state.progressLabel != null 
-                ? 'AI is thinking... (${state.progressLabel})'
-                : 'AI is thinking...',
-            style: GoogleFonts.archivo(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: cs.primary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSummaryContent(SummaryResult result) {
-    final cs = Theme.of(context).colorScheme;
-    final isGlobal = result.mode == SummaryMode.global;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: isGlobal ? cs.primaryContainer : cs.secondaryContainer,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                isGlobal ? 'FULL BOOK SUMMARY' : 'QUICK INSIGHTS',
-                style: GoogleFonts.archivo(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w900,
-                  color: isGlobal ? cs.onPrimaryContainer : cs.onSecondaryContainer,
-                ),
-              ),
-            ),
-            const Spacer(),
-            Text(
-              'On-Device AI',
-              style: GoogleFonts.archivo(fontSize: 10, color: cs.onSurfaceVariant),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        ...result.sentences.map((s) => Padding(
-          padding: const EdgeInsets.only(bottom: 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('• ', style: GoogleFonts.newsreader(fontSize: 20, height: 1.2)),
-              Expanded(
-                child: Text(
-                  s,
-                  style: GoogleFonts.newsreader(
-                    fontSize: 18,
-                    color: cs.onSurface,
-                    height: 1.5,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        )),
-      ],
-    );
-  }
-}
